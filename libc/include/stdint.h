@@ -20,4 +20,6 @@ typedef unsigned int uint32_t;
 # define __uint32_t_defined
 #endif
 typedef unsigned long int uint64_t;
+typedef __INTPTR_TYPE__ intptr_t;
+typedef __UINTPTR_TYPE__ uintptr_t;
 #endif

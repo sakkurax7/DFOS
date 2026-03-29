@@ -22,8 +22,16 @@ stack_top:
 # could have potientially wrote over them
 .section .bss, "aw", @nobits
 	.align 4096
+.global boot_multiboot_magic
+boot_multiboot_magic:
+	.skip 4
+.global boot_multiboot_info
+boot_multiboot_info:
+	.skip 4
+.global boot_page_directory
 boot_page_directory:
 	.skip 4096
+.global boot_page_table1
 boot_page_table1:
 	.skip 4096
 # We may need more if kernel > 3MiB
@@ -33,6 +41,10 @@ boot_page_table1:
 .global _start
 .type _start, @function
 _start:
+	# Preserve the Multiboot handoff values until C initialization is ready.
+	movl %eax, boot_multiboot_magic - 0xC0000000
+	movl %ebx, boot_multiboot_info - 0xC0000000
+
 	# Physical address of boot_page_table1
 	movl $(boot_page_table1 - 0xC0000000), %edi
 	# First address to map is 0
@@ -66,6 +78,8 @@ _start:
 	movl $(0x000B8000 | 0x003), boot_page_table1 - 0xC0000000 + 1023 * 4
 
 	# Map page table to 0x0... and 0xC0...
+	# Entry 0 keeps the early identity map alive long enough to flip CR0 safely.
+	# Entry 768 mirrors the same table into the higher-half kernel base at 0xC0000000.
 	movl $(boot_page_table1 - 0xC0000000 + 0x003), boot_page_directory - 0xC0000000 + 0
 	movl $(boot_page_table1 - 0xC0000000 + 0x003), boot_page_directory - 0xC0000000 + 768 * 4
 
@@ -79,20 +93,20 @@ _start:
 	movl %ecx, %cr0
 
 	# Jump to higher half using absolute jump
+	# The absolute jump forces EIP to be reloaded from the higher-half mapping.
 	lea 4f, %ecx
 	jmp *%ecx
 
 4:
 	# Paging is now setup fully and enabled
-	# Unmap identity mapping
-	movl $0, boot_page_directory + 0
-	
-	# Reload crc3 to force a TLB flush
-	movl %cr3, %ecx
-	movl %ecx, %cr3
-
 	# Set up the stack
 	mov $stack_top, %esp
+
+	# Restore the Multiboot values as C arguments.
+	movl boot_multiboot_magic, %eax
+	movl boot_multiboot_info, %ebx
+	pushl %ebx
+	pushl %eax
 
 	call kernel_main
 

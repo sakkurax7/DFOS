@@ -1,6 +1,6 @@
-DEFAULT_HOST!=../default-host.sh
-HOST?=DEFAULT_HOST
-HOSTARCH!=../target-triplet-to-arch.sh $(HOST)
+DEFAULT_HOST:=$(shell sh ../default-host.sh)
+HOST?=$(DEFAULT_HOST)
+HOSTARCH:=$(shell sh ../target-triplet-to-arch.sh $(HOST))
 
 CFLAGS?=-O2 -g
 CPPFLAGS?=
@@ -13,7 +13,7 @@ EXEC_PREFIX?=$(PREFIX)
 INCLUDEDIR?=$(PREFIX)/include
 LIBDIR?=$(EXEC_PREFIX)/lib
 
-CFLAGS:=$(CFLAGS) -ffreestanding -Wall -Wextra
+CFLAGS:=$(CFLAGS) -ffreestanding -Wall -Wextra -fstack-protector-strong
 CPPFLAGS:=$(CPPFLAGS) -D__is_libc -Iinclude
 LIBK_CFLAGS:=$(CFLAGS)
 LIBK_CPPFLAGS:=$(CPPFLAGS) -D__is_libk
@@ -34,9 +34,11 @@ stdio/putchar.o \
 stdio/puts.o \
 stdlib/abort.o \
 string/memcmp.o \
+string/strcmp.o \
 string/memcpy.o \
 string/memmove.o \
 string/memset.o \
+string/strncmp.o \
 string/strlen.o \
 
 HOSTEDOBJS=\
@@ -83,7 +85,7 @@ install: install-headers install-libs
 
 install-headers:
 	mkdir -p $(DESTDIR)$(INCLUDEDIR)
-	cp -R --preserve=timestamps include/. $(DESTDIR)$(INCLUDEDIR)/.
+	cp -R include/* $(DESTDIR)$(INCLUDEDIR)/
 
 install-libs: $(BINARIES)
 	mkdir -p $(DESTDIR)$(LIBDIR)

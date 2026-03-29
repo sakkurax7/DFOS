@@ -1,0 +1,4 @@
+DFOS initrd
+-------------
+The ramdisk is currently parsed as a tar archive loaded as the first Multiboot module.
+The VFS is intentionally small, read-only, and aimed at kernel bring-up and debugger exploration.

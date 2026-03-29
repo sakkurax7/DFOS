@@ -2,4 +2,4 @@
 set -e
 . ./iso.sh
 
-qemu-system-$(./target-triplet-to-arch.sh $HOST) -cdrom dfos.iso
+qemu-system-$(sh ./target-triplet-to-arch.sh $HOST) -cdrom dfos.iso

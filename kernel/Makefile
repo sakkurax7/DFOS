@@ -1,6 +1,6 @@
-DEFAULT_HOST!=../default-host.sh
-HOST?=DEFAULT_HOST
-HOSTARCH!=../target-triplet-to-arch.sh $(HOST)
+DEFAULT_HOST:=$(shell sh ../default-host.sh)
+HOST?=$(DEFAULT_HOST)
+HOSTARCH:=$(shell sh ../target-triplet-to-arch.sh $(HOST))
 
 CFLAGS?=-O2 -g
 CPPFLAGS?=
@@ -13,7 +13,7 @@ EXEC_PREFIX?=$(PREFIX)
 BOOTDIR?=$(EXEC_PREFIX)/boot
 INCLUDEDIR?=$(PREFIX)/include
 
-CFLAGS:=$(CFLAGS) -ffreestanding -Wall -Wextra
+CFLAGS:=$(CFLAGS) -ffreestanding -Wall -Wextra -fstack-protector-strong
 CPPFLAGS:=$(CPPFLAGS) -D__is_kernel -Iinclude
 LDFLAGS:=$(LDFLAGS)
 LIBS:=$(LIBS) -nostdlib -lk -lgcc
@@ -29,7 +29,15 @@ LIBS:=$(LIBS) $(KERNEL_ARCH_LIBS)
 
 KERNEL_OBJS=\
 $(KERNEL_ARCH_OBJS) \
+kernel/heap.o \
+kernel/kdebug.o \
 kernel/kernel.o \
+kernel/paging.o \
+kernel/panic.o \
+kernel/pmm.o \
+kernel/scheduler.o \
+kernel/stack_protector.o \
+kernel/vfs.o \
 
 OBJS=\
 $(ARCHDIR)/crti.o \
@@ -74,7 +82,7 @@ install: install-headers install-kernel
 
 install-headers:
 	mkdir -p $(DESTDIR)$(INCLUDEDIR)
-	cp -R --preserve=timestamps include/. $(DESTDIR)$(INCLUDEDIR)/.
+	cp -R include/* $(DESTDIR)$(INCLUDEDIR)/
 
 install-kernel: dfos.kernel
 	mkdir -p $(DESTDIR)$(BOOTDIR)

@@ -1,0 +1,5 @@
+Welcome to DFOS.
+This file was loaded from the initialization ramdisk.
+Use the in-kernel debugger and run:
+ls
+cat hello.txt

@@ -1,8 +1,70 @@
 # DFOS
-DFOS
 
-We are using an i686-elf cross compiler. To set this up, set your $PREFIX to cross compiler installation directory, $TARGET to i686-elf, and $PATH to $PREFIX/bin:$PATH. Obtain the Binutils and GCC source, and compile both of those using the provided flags. To use the compiler, $PREFIX/bin/$TARGET-gcc, or add it to your path.
+DFOS is a small educational 32-bit x86 kernel that now boots into a structured higher-half environment with:
 
-To build and run, just run the qemu.sh script. Make sure to have all of the build tools installed and QEMU as well for the virtualization environment. You can search around for pre-compiled i686-elf compilers if you are lacking computing power.
+- Multiboot handoff parsing
+- Multiboot module-backed initrd loading
+- GDT setup
+- IDT and interrupt stubs
+- PIC remapping and PIT timer interrupts
+- A multithreaded kernel scheduler
+- PS/2 keyboard input
+- A small internal kernel debugger
+- Read-only initrd/VFS support
+- Bootstrap paging plus prepared PAE paging tables
+- A physical page-frame allocator
+- An early kernel heap / memory manager
+- Stack-smash protection hooks
+- More capable formatted printing
+- Cleaner build and run entry points
 
-The libc library right now will be completely rewritten in the new future. It is being used now for debugging purposes and to test features. 
+## Requirements
+
+The intended toolchain is an `i686-elf` cross compiler:
+
+- `i686-elf-gcc`
+- `i686-elf-ar`
+- `grub-file`
+- `grub-mkrescue`
+- `qemu-system-i386`
+
+This repository was also adjusted to be friendlier on macOS/BSD userlands where GNU-specific `cp` flags and executable-bit assumptions caused build failures.
+
+## Build
+
+Preferred entry points:
+
+```sh
+make headers
+make build
+make iso
+make run
+make clean
+make check
+```
+
+The original shell scripts still exist and are used underneath:
+
+```sh
+sh headers.sh
+sh build.sh
+sh iso.sh
+sh qemu.sh
+```
+
+## Notes
+
+- The kernel currently boots with legacy 32-bit paging enabled from assembly.
+- PAE support is detected at runtime and matching PAE page tables are prepared in C, but the kernel does not yet switch the live MMU into PAE mode during bootstrap.
+- The multitasking model is kernel-only and uses timer-driven context switching between kernel threads that share one address space.
+- The heap is still an early kernel heap, but paging and PMM helpers now also expose page-level allocation/mapping inside the bootstrap window.
+- Keyboard support currently targets a PS/2 controller with set-1 scancodes.
+- Press `F1` at runtime to enter the internal kernel debugger.
+
+## Documentation
+
+- [Kernel Architecture](docs/kernel-architecture.md)
+- [Build And Workflow](docs/build-and-workflow.md)
+- [Kernel Developer Guide](docs/developer-kernel-guide.md)
+- [Application Developer Guide](docs/application-developer-guide.md)
+- [User Guide](docs/user-guide.md)
