@@ -28,9 +28,11 @@ boot_multiboot_magic:
 .global boot_multiboot_info
 boot_multiboot_info:
 	.skip 4
+	.align 4096
 .global boot_page_directory
 boot_page_directory:
 	.skip 4096
+	.align 4096
 .global boot_page_table1
 boot_page_table1:
 	.skip 4096
