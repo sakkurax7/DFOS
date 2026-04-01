@@ -49,23 +49,18 @@ _start:
 	movl $(boot_page_table1 - 0xC0000000), %edi
 	# First address to map is 0
 	movl $0, %esi
-	# Map 1023 pages, with 1024 being VGA text buffer
+	# Map 1023 low-memory pages and leave the last entry for VGA text memory.
+	# The higher-half kernel touches Multiboot structures and early modules via
+	# physical-to-virtual translation before a fuller VM layout exists, so the
+	# whole bootstrap window must stay present for now.
 	movl $1023, %ecx
 
 1:
-	# Only map kernel
-	cmpl $(_kernel_start - 0xC0000000), %esi
-	jl 2f
-	cmpl $(_kernel_end - 0xC0000000), %esi
-	jge 3f
-
 	# Map physical addresses as present, writable.
-	# We need to map .text and .rodata as non-writable
 	movl %esi, %edx
 	orl $0x003, %edx
 	movl %edx, (%edi)
 
-2:
 	# Size of page is 4096 bytes
 	addl $4096, %esi
 	# Size of entries in boot_page_table1 is 4 bytes.
@@ -73,7 +68,6 @@ _start:
 	# Loop to the next entry if we haven't finished
 	loop 1b
 
-3:
 	# Map VGA memory to 0xC03FF000 as present, writable
 	movl $(0x000B8000 | 0x003), boot_page_table1 - 0xC0000000 + 1023 * 4
 

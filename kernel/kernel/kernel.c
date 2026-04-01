@@ -37,10 +37,10 @@ void kernel_main(uint32_t multiboot_magic, uint32_t multiboot_info_addr) {
 		panic("invalid multiboot magic 0x%x", multiboot_magic);
 
 	gdt_init();
+	idt_init();
 	paging_init(multiboot_info_addr);
 	pmm_init(multiboot_info_addr);
 	heap_init();
-	idt_init();
 	keyboard_init();
 	vfs_init(multiboot_info_addr);
 	pit_init(100);
