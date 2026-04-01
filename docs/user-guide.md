@@ -82,7 +82,7 @@ Check that:
 - `i686-elf-gcc` is installed and in `PATH`
 - `grub-mkimage` is installed
 - `xorriso` is installed
-- The GRUB `i386-pc` platform files are present, usually under `/usr/lib/grub/i386-pc`
+- `wget`, `apt-cache`, and `dpkg-deb` are installed if you want the build to download the GRUB `i386-pc` platform files locally
 - `qemu-system-i386` is installed
 
 ### The system boots but no keyboard input appears
@@ -99,7 +99,7 @@ Check that:
 - You launched the VM through [`qemu.sh`](/Users/n1le/Documents/Projects/DFOS/qemu.sh) or `make run`, not a stale custom command line
 - The guest is using legacy PC BIOS boot for this image, not a UEFI-only firmware configuration
 - `dfos.iso` was rebuilt successfully before launch
-- The ISO build found the GRUB `i386-pc` platform files and produced a BIOS El Torito image instead of a host-native UEFI-only image
+- The ISO build found or downloaded the GRUB `i386-pc` platform files and produced a BIOS El Torito image instead of a host-native UEFI-only image
 
 ### The system halts with a panic
 

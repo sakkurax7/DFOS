@@ -27,9 +27,10 @@ The intended toolchain is an `i686-elf` cross compiler:
 - `grub-file`
 - `grub-mkimage`
 - `xorriso`
+- `wget`
 - `qemu-system-i386`
 
-For legacy BIOS ISO generation on `arm64` Ubuntu hosts, install the GRUB `i386-pc` platform files as well. The common package name is `grub-pc-bin`.
+For legacy BIOS ISO generation on `arm64` Ubuntu hosts, the build can download the GRUB `i386-pc` platform files into `compile/grub/i386-pc` automatically. It uses `grub-pc-bin` package metadata from `apt-cache` and fetches the package with `wget`.
 
 This repository was also adjusted to be friendlier on macOS/BSD userlands where GNU-specific `cp` flags and executable-bit assumptions caused build failures.
 

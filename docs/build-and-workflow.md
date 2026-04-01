@@ -37,10 +37,11 @@ The repository uses:
 - [`headers.sh`](/Users/n1le/Documents/Projects/DFOS/headers.sh) for sysroot header install
 - [`build.sh`](/Users/n1le/Documents/Projects/DFOS/build.sh) for project builds
 - [`iso.sh`](/Users/n1le/Documents/Projects/DFOS/iso.sh) for ISO generation using `grub-mkimage -O i386-pc-eltorito` plus `xorriso`
+- [`fetch-grub-i386-pc.sh`](/Users/n1le/Documents/Projects/DFOS/fetch-grub-i386-pc.sh) for downloading the GRUB BIOS platform files into `compile/grub/i386-pc` when they are not installed system-wide
 - [`qemu.sh`](/Users/n1le/Documents/Projects/DFOS/qemu.sh) for emulator launch with the ISO attached as the first IDE CD-ROM and `boot order=d`
 - [`initrd.sh`](/Users/n1le/Documents/Projects/DFOS/initrd.sh) for tar-based initrd generation
 
-On `arm64` Ubuntu hosts, install the GRUB BIOS platform files for `i386-pc` in addition to the normal GRUB tools. The build looks for them in `/usr/lib/grub/i386-pc` by default and allows overriding that path with `GRUB_I386_PC_DIR`.
+On `arm64` Ubuntu hosts, the build looks for GRUB BIOS platform files in `/usr/lib/grub/i386-pc` first. If they are missing, it downloads `grub-pc-bin` into `compile/grub/i386-pc` using `apt-cache`, `wget`, and `dpkg-deb`. You can override the final lookup path with `GRUB_I386_PC_DIR`.
 
 ## Cleanup Changes
 

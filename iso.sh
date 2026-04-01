@@ -2,7 +2,14 @@
 set -e
 . ./build.sh
 
+LOCAL_GRUB_INSTALL_ROOT=${LOCAL_GRUB_INSTALL_ROOT:-"$(pwd)/compile/grub/install"}
+LOCAL_GRUB_BIN_DIR=${LOCAL_GRUB_BIN_DIR:-"$LOCAL_GRUB_INSTALL_ROOT/usr/bin"}
+LOCAL_GRUB_BUILD_I386_PC_DIR=${LOCAL_GRUB_BUILD_I386_PC_DIR:-"$LOCAL_GRUB_INSTALL_ROOT/usr/lib/grub/i386-pc"}
+LOCAL_GRUB_I386_PC_DIR=${LOCAL_GRUB_I386_PC_DIR:-"$(pwd)/compile/grub/i386-pc"}
 GRUB_I386_PC_DIR=${GRUB_I386_PC_DIR:-/usr/lib/grub/i386-pc}
+GRUB_PC_BIN_PACKAGE=${GRUB_PC_BIN_PACKAGE:-grub-pc-bin}
+GRUB_MKIMAGE=${GRUB_MKIMAGE:-grub-mkimage}
+GRUB_FILE=${GRUB_FILE:-grub-file}
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -11,21 +18,51 @@ require_command() {
   fi
 }
 
-require_command grub-mkimage
+resolve_grub_tool() {
+  if [ -x "$1" ]; then
+    printf '%s\n' "$1"
+  elif command -v "$1" >/dev/null 2>&1; then
+    command -v "$1"
+  elif [ -x "$2" ]; then
+    printf '%s\n' "$2"
+  else
+    return 1
+  fi
+}
+
+GRUB_MKIMAGE=$(resolve_grub_tool "$GRUB_MKIMAGE" "$LOCAL_GRUB_BIN_DIR/grub-mkimage") || {
+  cat >&2 << EOF
+error: GRUB's mkimage tool was not found.
+Install GRUB system-wide or run 'sh ./build-grub-i386-pc.sh' to build a local copy into $LOCAL_GRUB_INSTALL_ROOT.
+EOF
+  exit 1
+}
+
 require_command xorriso
+
+if [ ! -d "$GRUB_I386_PC_DIR" ] || [ ! -f "$GRUB_I386_PC_DIR/cdboot.img" ]; then
+  if [ -f "$LOCAL_GRUB_BUILD_I386_PC_DIR/cdboot.img" ]; then
+    GRUB_I386_PC_DIR=$LOCAL_GRUB_BUILD_I386_PC_DIR
+  else
+    if [ ! -f "$LOCAL_GRUB_I386_PC_DIR/cdboot.img" ]; then
+      sh ./fetch-grub-i386-pc.sh "$LOCAL_GRUB_I386_PC_DIR"
+    fi
+    GRUB_I386_PC_DIR=$LOCAL_GRUB_I386_PC_DIR
+  fi
+fi
 
 if [ ! -d "$GRUB_I386_PC_DIR" ] || [ ! -f "$GRUB_I386_PC_DIR/cdboot.img" ]; then
   cat >&2 << EOF
 error: GRUB BIOS platform files were not found at $GRUB_I386_PC_DIR.
 This build creates a legacy x86 BIOS ISO and requires the GRUB i386-pc platform files.
-On Ubuntu arm64 this is usually provided by the grub-pc-bin package.
-You can also override the lookup path by setting GRUB_I386_PC_DIR.
+The build can fetch them into $LOCAL_GRUB_I386_PC_DIR on Ubuntu arm64, or you can override the lookup path with GRUB_I386_PC_DIR.
 EOF
   exit 1
 fi
 
-if command -v grub-file >/dev/null 2>&1; then
-  grub-file --is-x86-multiboot sysroot/boot/dfos.kernel
+GRUB_FILE=$(resolve_grub_tool "$GRUB_FILE" "$LOCAL_GRUB_BIN_DIR/grub-file" || true)
+if [ -n "$GRUB_FILE" ]; then
+  "$GRUB_FILE" --is-x86-multiboot sysroot/boot/dfos.kernel
 fi
 
 TMPDIR=$(mktemp -d)
@@ -65,7 +102,7 @@ set prefix=($root)/boot/grub
 configfile /boot/grub/grub.cfg
 EOF
 
-grub-mkimage \
+"$GRUB_MKIMAGE" \
   -O i386-pc-eltorito \
   -d "$GRUB_I386_PC_DIR" \
   -o isodir/boot/grub/i386-pc/eltorito.img \
