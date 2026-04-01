@@ -41,9 +41,26 @@ boot_page_table1:
 .global _start
 .type _start, @function
 _start:
+	# GRUB leaves much of the CPU state unspecified. Keep maskable interrupts off
+	# until the kernel installs its own IDT, and clear DF so C/string code behaves
+	# according to the SysV ABI from the first function call onward.
+	cli
+	cld
+
 	# Preserve the Multiboot handoff values until C initialization is ready.
 	movl %eax, boot_multiboot_magic - 0xC0000000
 	movl %ebx, boot_multiboot_info - 0xC0000000
+
+	# Start from known-zero paging structures instead of relying on the bootloader
+	# to have cleared BSS exactly the way our early paging code expects.
+	movl $(boot_page_directory - 0xC0000000), %edi
+	xorl %eax, %eax
+	movl $1024, %ecx
+	rep stosl
+
+	movl $(boot_page_table1 - 0xC0000000), %edi
+	movl $1024, %ecx
+	rep stosl
 
 	# Physical address of boot_page_table1
 	movl $(boot_page_table1 - 0xC0000000), %edi
