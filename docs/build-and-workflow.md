@@ -17,7 +17,7 @@ What each target does:
 
 - `headers`: installs libc and kernel headers into `sysroot`
 - `build`: builds the freestanding libraries and kernel image, then packs the initrd
-- `iso`: creates a GRUB bootable ISO
+- `iso`: creates a BIOS-bootable GRUB ISO for the `i386` QEMU target
 - `run`: launches QEMU with the ISO
 - `clean`: removes build outputs
 - `check`: runs a local Clang syntax pass that does not require the cross toolchain
@@ -36,9 +36,11 @@ The repository uses:
 - [`config.sh`](/Users/n1le/Documents/Projects/DFOS/config.sh) for shared environment variables
 - [`headers.sh`](/Users/n1le/Documents/Projects/DFOS/headers.sh) for sysroot header install
 - [`build.sh`](/Users/n1le/Documents/Projects/DFOS/build.sh) for project builds
-- [`iso.sh`](/Users/n1le/Documents/Projects/DFOS/iso.sh) for ISO generation
+- [`iso.sh`](/Users/n1le/Documents/Projects/DFOS/iso.sh) for ISO generation using `grub-mkimage -O i386-pc-eltorito` plus `xorriso`
 - [`qemu.sh`](/Users/n1le/Documents/Projects/DFOS/qemu.sh) for emulator launch with the ISO attached as the first IDE CD-ROM and `boot order=d`
 - [`initrd.sh`](/Users/n1le/Documents/Projects/DFOS/initrd.sh) for tar-based initrd generation
+
+On `arm64` Ubuntu hosts, install the GRUB BIOS platform files for `i386-pc` in addition to the normal GRUB tools. The build looks for them in `/usr/lib/grub/i386-pc` by default and allows overriding that path with `GRUB_I386_PC_DIR`.
 
 ## Cleanup Changes
 

@@ -25,8 +25,11 @@ The intended toolchain is an `i686-elf` cross compiler:
 - `i686-elf-gcc`
 - `i686-elf-ar`
 - `grub-file`
-- `grub-mkrescue`
+- `grub-mkimage`
+- `xorriso`
 - `qemu-system-i386`
+
+For legacy BIOS ISO generation on `arm64` Ubuntu hosts, install the GRUB `i386-pc` platform files as well. The common package name is `grub-pc-bin`.
 
 This repository was also adjusted to be friendlier on macOS/BSD userlands where GNU-specific `cp` flags and executable-bit assumptions caused build failures.
 
@@ -52,7 +55,7 @@ sh iso.sh
 sh qemu.sh
 ```
 
-The default QEMU launcher attaches `dfos.iso` as the primary IDE CD-ROM and forces `boot order=d` so firmware does not skip past the installation media. The ISO build also validates that the finished image advertises a BIOS El Torito boot entry before treating the build as successful.
+The default QEMU launcher attaches `dfos.iso` as the primary IDE CD-ROM and forces `boot order=d` so firmware does not skip past the installation media. The ISO build now generates the BIOS El Torito boot image explicitly with `grub-mkimage -O i386-pc-eltorito`, which keeps ISO output consistent even on `arm64` build hosts.
 
 ## Notes
 
