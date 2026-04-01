@@ -1,4 +1,4 @@
-.PHONY: headers build iso run debug clean check
+.PHONY: headers build iso run debug boot-layout clean check
 
 headers:
 	sh headers.sh
@@ -14,6 +14,9 @@ run: iso
 
 debug: iso
 	sh qemu-debug.sh
+
+boot-layout: build
+	sh check-boot-layout.sh
 
 clean:
 	sh clean.sh

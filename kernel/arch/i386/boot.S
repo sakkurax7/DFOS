@@ -18,21 +18,22 @@ stack_bottom:
 .skip 16384
 stack_top:
 
-# Preallocate pages. Do not hard code addresses as bootloader 
-# could have potientially wrote over them
-.section .bss, "aw", @nobits
-	.align 4096
+# Early bootstrap data lives in dedicated linker sections so the final kernel
+# image can enforce the exact alignment needed by CR3/PDE/PTE hardware rules.
+.section .bootstrap_data, "aw", @nobits
 .global boot_multiboot_magic
 boot_multiboot_magic:
 	.skip 4
 .global boot_multiboot_info
 boot_multiboot_info:
 	.skip 4
-	.align 4096
+
+.section .bootstrap_paging, "aw", @nobits
+	.balign 4096
 .global boot_page_directory
 boot_page_directory:
 	.skip 4096
-	.align 4096
+	.balign 4096
 .global boot_page_table1
 boot_page_table1:
 	.skip 4096

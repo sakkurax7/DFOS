@@ -92,7 +92,6 @@ DR0=00000000 DR1=00000000 DR2=00000000 DR3=00000000
 DR6=ffff0ff0 DR7=00000400
 CCS=00000044 CCD=00000000 CCO=EFLAGS
 EFER=0000000000000000
-Servicing hardware INT=0x08
 SMM: enter
 EAX=000000b5 EBX=000f7d38 ECX=00001234 EDX=00006cff
 ESI=00006cb8 EDI=0effee66 EBP=00006c78 ESP=00006c78
@@ -169,6 +168,7 @@ DR0=00000000 DR1=00000000 DR2=00000000 DR3=00000000
 DR6=ffff0ff0 DR7=00000400
 CCS=00000004 CCD=00000001 CCO=EFLAGS
 EFER=0000000000000000
+Servicing hardware INT=0x08
 SMM: enter
 EAX=000000b5 EBX=000f7d38 ECX=00001234 EDX=000069ff
 ESI=000069a2 EDI=0effee66 EBP=00006962 ESP=00006962
@@ -555,8 +555,53 @@ Servicing hardware INT=0x08
 Servicing hardware INT=0x08
 Servicing hardware INT=0x08
 Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
+Servicing hardware INT=0x08
 Servicing hardware INT=0x09
 Servicing hardware INT=0x08
+Servicing hardware INT=0x09
 Servicing hardware INT=0x08
 check_exception old: 0xffffffff new 0xe
      0: v=0e e=0000 i=0 cpl=0 IP=0010:001001bf pc=001001bf SP=0018:0007ff00 CR2=001001bf
