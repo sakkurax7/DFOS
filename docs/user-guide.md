@@ -33,6 +33,12 @@ Important:
 - The project currently targets an `i686-elf` toolchain
 - The bundled launcher forces QEMU to boot from the generated ISO first, which helps when firmware would otherwise fall through to another device
 
+If you need a sticky debug session with a `qemu.log` trace, use:
+
+```sh
+make debug
+```
+
 ## Basic Runtime Behavior
 
 At boot DFOS:
@@ -71,7 +77,7 @@ system/info.txt
 
 ## Files Available At Boot
 
-DFOS currently ships a small initialization ramdisk. The bundled sample files live in the [`initrd/`](/Users/n1le/Documents/Projects/DFOS/initrd) directory in the source tree and are available from the debugger after boot.
+DFOS ships a small initialization ramdisk. The bundled sample files live in [`../initrd/`](../initrd/) and are available from the debugger after boot.
 
 ## Troubleshooting
 
@@ -96,10 +102,18 @@ Check that:
 
 Check that:
 
-- You launched the VM through [`qemu.sh`](/Users/n1le/Documents/Projects/DFOS/qemu.sh) or `make run`, not a stale custom command line
+- You launched the VM through [`../scripts/qemu.sh`](../scripts/qemu.sh) or `make run`, not a stale custom command line
 - The guest is using legacy PC BIOS boot for this image, not a UEFI-only firmware configuration
 - `dfos.iso` was rebuilt successfully before launch
 - The ISO build found or downloaded the GRUB `i386-pc` platform files and produced a BIOS El Torito image instead of a host-native UEFI-only image
+
+### The guest resets immediately after selecting the GRUB menu entry
+
+Try:
+
+- `make boot-layout` to confirm the bootstrap paging symbols are aligned in the built kernel image
+- `make debug` to capture `qemu.log` without an automatic reboot
+- Reviewing the last exception sequence in `qemu.log` before changing the bootstrap code
 
 ### The system halts with a panic
 

@@ -1,11 +1,17 @@
 #!/bin/sh
 set -e
-. ./build.sh
 
-LOCAL_GRUB_INSTALL_ROOT=${LOCAL_GRUB_INSTALL_ROOT:-"$(pwd)/compile/grub/install"}
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+cd "$REPO_ROOT"
+
+sh "$SCRIPT_DIR/build.sh"
+
+LOCAL_GRUB_INSTALL_ROOT=${LOCAL_GRUB_INSTALL_ROOT:-"$REPO_ROOT/compile/grub/install"}
 LOCAL_GRUB_BIN_DIR=${LOCAL_GRUB_BIN_DIR:-"$LOCAL_GRUB_INSTALL_ROOT/usr/bin"}
 LOCAL_GRUB_BUILD_I386_PC_DIR=${LOCAL_GRUB_BUILD_I386_PC_DIR:-"$LOCAL_GRUB_INSTALL_ROOT/usr/lib/grub/i386-pc"}
-LOCAL_GRUB_I386_PC_DIR=${LOCAL_GRUB_I386_PC_DIR:-"$(pwd)/compile/grub/i386-pc"}
+LOCAL_GRUB_I386_PC_DIR=${LOCAL_GRUB_I386_PC_DIR:-"$REPO_ROOT/compile/grub/i386-pc"}
 GRUB_I386_PC_DIR=${GRUB_I386_PC_DIR:-/usr/lib/grub/i386-pc}
 GRUB_PC_BIN_PACKAGE=${GRUB_PC_BIN_PACKAGE:-grub-pc-bin}
 GRUB_MKIMAGE=${GRUB_MKIMAGE:-grub-mkimage}
@@ -33,7 +39,7 @@ resolve_grub_tool() {
 GRUB_MKIMAGE=$(resolve_grub_tool "$GRUB_MKIMAGE" "$LOCAL_GRUB_BIN_DIR/grub-mkimage") || {
   cat >&2 << EOF
 error: GRUB's mkimage tool was not found.
-Install GRUB system-wide or run 'sh ./build-grub-i386-pc.sh' to build a local copy into $LOCAL_GRUB_INSTALL_ROOT.
+Install GRUB system-wide or run 'sh ./scripts/build-grub-i386-pc.sh' to build a local copy into $LOCAL_GRUB_INSTALL_ROOT.
 EOF
   exit 1
 }
@@ -45,7 +51,7 @@ if [ ! -d "$GRUB_I386_PC_DIR" ] || [ ! -f "$GRUB_I386_PC_DIR/cdboot.img" ]; then
     GRUB_I386_PC_DIR=$LOCAL_GRUB_BUILD_I386_PC_DIR
   else
     if [ ! -f "$LOCAL_GRUB_I386_PC_DIR/cdboot.img" ]; then
-      sh ./fetch-grub-i386-pc.sh "$LOCAL_GRUB_I386_PC_DIR"
+      sh "$SCRIPT_DIR/fetch-grub-i386-pc.sh" "$LOCAL_GRUB_I386_PC_DIR"
     fi
     GRUB_I386_PC_DIR=$LOCAL_GRUB_I386_PC_DIR
   fi

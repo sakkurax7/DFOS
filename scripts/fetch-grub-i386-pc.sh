@@ -1,7 +1,12 @@
 #!/bin/sh
 set -e
 
-OUTPUT_DIR=${1:-"$(pwd)/compile/grub/i386-pc"}
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+cd "$REPO_ROOT"
+
+OUTPUT_DIR=${1:-"$REPO_ROOT/compile/grub/i386-pc"}
 PACKAGE_NAME=${GRUB_PC_BIN_PACKAGE:-grub-pc-bin}
 UBUNTU_MIRROR=${UBUNTU_MIRROR:-https://ports.ubuntu.com/ubuntu-ports}
 

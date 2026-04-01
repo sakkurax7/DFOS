@@ -1,25 +1,25 @@
 .PHONY: headers build iso run debug boot-layout clean check
 
 headers:
-	sh headers.sh
+	sh scripts/headers.sh
 
 build: headers
-	sh build.sh
+	sh scripts/build.sh
 
 iso: build
-	sh iso.sh
+	sh scripts/iso.sh
 
 run: iso
-	sh qemu.sh
+	sh scripts/qemu.sh
 
 debug: iso
-	sh qemu-debug.sh
+	sh scripts/qemu-debug.sh
 
 boot-layout: build
-	sh check-boot-layout.sh
+	sh scripts/check-boot-layout.sh
 
 clean:
-	sh clean.sh
+	sh scripts/clean.sh
 
 check:
 	cc -target i386-unknown-elf -ffreestanding -fstack-protector-strong -fsyntax-only \

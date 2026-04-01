@@ -1,7 +1,12 @@
 #!/bin/sh
 set -eu
 
-KERNEL_IMAGE=${1:-sysroot/boot/dfos.kernel}
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+cd "$REPO_ROOT"
+
+KERNEL_IMAGE=${1:-"$REPO_ROOT/sysroot/boot/dfos.kernel"}
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then

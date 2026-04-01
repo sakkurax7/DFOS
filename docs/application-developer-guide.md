@@ -26,20 +26,20 @@ The easiest way to prototype application logic today is to add a kernel task wit
 - `scheduler_create_kernel_task`
 - `printf`
 - `scheduler_sleep`
-- `vfs_open` / `vfs_read`
+- `vfs_open` and `vfs_read`
 
-See the demo workers in [kernel.c](/Users/n1le/Documents/Projects/DFOS/kernel/kernel/kernel.c).
+See the demo workers in [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c).
 
 Good early prototypes:
 
 - Background daemons
 - File readers
 - Input-driven tools
-- Debug/test harnesses
+- Debug and test harnesses
 
 ### Initrd Content
 
-The initrd is built from the [`initrd/`](/Users/n1le/Documents/Projects/DFOS/initrd) directory and packed into `initrd.tar`.
+The initrd is built from [`../initrd/`](../initrd/) and packed into `initrd.tar`.
 
 You can add:
 
@@ -131,7 +131,7 @@ will be much easier.
 
 The main milestones before DFOS can host true applications are:
 
-1. User mode segments / privilege transitions
+1. User-mode segments and privilege transitions
 2. Syscall entry and ABI design
 3. Process and address-space management
 4. Executable loading

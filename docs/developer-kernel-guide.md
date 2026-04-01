@@ -12,9 +12,9 @@ DFOS currently runs as a single-address-space 32-bit x86 kernel:
 - Mapped into the higher half at `0xC0000000`
 - Running only kernel threads
 - Using VGA text mode for output
-- Using PIC/PIT/PS2-era PC hardware assumptions
+- Using PIC, PIT, and PS/2-era PC hardware assumptions
 
-There is no user/kernel separation yet. "Applications" currently means:
+There is no user and kernel separation yet. "Applications" currently means:
 
 - New kernel threads created inside the kernel
 - Tools and content shipped in the initrd
@@ -22,25 +22,28 @@ There is no user/kernel separation yet. "Applications" currently means:
 
 ## Boot Flow
 
-Entry begins in [boot.S](/Users/n1le/Documents/Projects/DFOS/kernel/arch/i386/boot.S).
+Entry begins in [`../kernel/arch/i386/boot.S`](../kernel/arch/i386/boot.S).
 
 The bootstrap code:
 
 1. Publishes a Multiboot header for GRUB
-2. Builds one temporary page directory and page table
-3. Identity-maps the early kernel image long enough to enable paging
-4. Mirrors the same mapping into the higher half
-5. Jumps to the higher-half virtual address space
-6. Calls `kernel_main(multiboot_magic, multiboot_info_addr)`
+2. Preserves the Multiboot handoff registers
+3. Clears the early bootstrap paging structures
+4. Builds one temporary page directory and page table
+5. Identity-maps the early low-memory window long enough to enable paging
+6. Mirrors the same mapping into the higher half
+7. Jumps to the higher-half virtual address space
+8. Calls `kernel_main(multiboot_magic, multiboot_info_addr)`
 
-Important constraint:
+Important constraints:
 
 - The bootstrap mapping covers only the first 4 MiB of physical memory mirrored at `0xC0000000`.
 - Early allocators and tables must fit inside that window unless paging is expanded.
+- The page directory and first page table must stay 4 KiB aligned, which is why they live in dedicated linker sections.
 
 ## Initialization Order
 
-See [kernel.c](/Users/n1le/Documents/Projects/DFOS/kernel/kernel/kernel.c).
+See [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c).
 
 Current initialization sequence:
 
@@ -48,17 +51,18 @@ Current initialization sequence:
 2. Stack protector seed
 3. Multiboot validation
 4. GDT
-5. Paging capability setup
-6. Physical memory manager
-7. Early heap
-8. IDT and interrupt controller setup
+5. IDT
+6. Paging capability setup
+7. Physical memory manager
+8. Early heap
 9. Keyboard
-10. VFS/initrd
+10. VFS and initrd indexing
 11. PIT
 12. Scheduler
-13. Debugger task
-14. Demo worker tasks
-15. Global interrupt enable
+13. Bootstrap current-task registration
+14. Debugger task
+15. Demo worker tasks
+16. Global interrupt enable
 
 That order matters. In particular:
 
@@ -70,14 +74,14 @@ That order matters. In particular:
 
 ### Physical Memory Manager
 
-See [pmm.c](/Users/n1le/Documents/Projects/DFOS/kernel/kernel/pmm.c).
+See [`../kernel/kernel/pmm.c`](../kernel/kernel/pmm.c).
 
 Design:
 
 - Bitmap-based frame ownership
 - Starts from "all reserved"
 - Frees only Multiboot-available regions
-- Re-reserves kernel, bitmap, Multiboot metadata, and modules
+- Re-reserves the kernel, bitmap, Multiboot metadata, and modules
 
 Use it when you need:
 
@@ -86,36 +90,36 @@ Use it when you need:
 
 ### Paging
 
-See [paging.c](/Users/n1le/Documents/Projects/DFOS/kernel/kernel/paging.c).
+See [`../kernel/kernel/paging.c`](../kernel/kernel/paging.c).
 
 Current paging capabilities:
 
-- Physical/virtual translation for the higher-half window
+- Physical and virtual translation for the higher-half window
 - Readiness detection and table preparation for PAE
-- Page map/unmap inside the existing bootstrap page table
+- Page map and unmap inside the existing bootstrap page table
 - A monotonic page allocator for virtual addresses inside the early mapped window
 
-Current limit:
+Current limits:
 
 - The kernel does not yet grow page tables on demand outside the bootstrap map.
 - `paging_alloc_pages` can exhaust the initial virtual window.
 
 ### Heap
 
-See [heap.c](/Users/n1le/Documents/Projects/DFOS/kernel/kernel/heap.c).
+See [`../kernel/kernel/heap.c`](../kernel/kernel/heap.c).
 
 The heap is intentionally simple:
 
 - First-fit allocator
-- Split/coalesce blocks
-- No separate slab/object caches
+- Split and coalesce blocks
+- No separate slab or object caches
 - No backing-store growth yet
 
 For larger future work, prefer building on page allocation rather than stretching the current heap model too far.
 
 ## Interrupt Model
 
-See [interrupts.c](/Users/n1le/Documents/Projects/DFOS/kernel/arch/i386/interrupts.c) and [interrupts_asm.S](/Users/n1le/Documents/Projects/DFOS/kernel/arch/i386/interrupts_asm.S).
+See [`../kernel/arch/i386/interrupts.c`](../kernel/arch/i386/interrupts.c) and [`../kernel/arch/i386/interrupts_asm.S`](../kernel/arch/i386/interrupts_asm.S).
 
 Current vector layout:
 
@@ -135,7 +139,7 @@ The scheduler relies on step 4 to resume different tasks.
 
 ## Scheduler And Threads
 
-See [scheduler.c](/Users/n1le/Documents/Projects/DFOS/kernel/kernel/scheduler.c).
+See [`../kernel/kernel/scheduler.c`](../kernel/kernel/scheduler.c).
 
 Current thread model:
 
@@ -152,7 +156,7 @@ When creating new kernel services:
 - Use `scheduler_sleep` instead of busy loops
 - Be aware that shared state needs protection once you add deeper concurrency primitives
 
-Current limit:
+Current limits:
 
 - There are no mutexes, semaphores, condition variables, or wait queues yet
 - All tasks share one address space
@@ -162,7 +166,7 @@ Current limit:
 
 ### Keyboard
 
-See [keyboard.c](/Users/n1le/Documents/Projects/DFOS/kernel/arch/i386/keyboard.c).
+See [`../kernel/arch/i386/keyboard.c`](../kernel/arch/i386/keyboard.c).
 
 The keyboard driver currently:
 
@@ -173,7 +177,7 @@ The keyboard driver currently:
 
 ### Kernel Debugger
 
-See [kdebug.c](/Users/n1le/Documents/Projects/DFOS/kernel/kernel/kdebug.c).
+See [`../kernel/kernel/kdebug.c`](../kernel/kernel/kdebug.c).
 
 The debugger is a regular kernel thread, not a special stop-the-world monitor. That means:
 
@@ -181,17 +185,17 @@ The debugger is a regular kernel thread, not a special stop-the-world monitor. T
 - It does not halt every other thread automatically
 - Output from other tasks may interleave unless you later add console locking
 
-### Initrd / VFS
+### Initrd And VFS
 
-See [vfs.c](/Users/n1le/Documents/Projects/DFOS/kernel/kernel/vfs.c).
+See [`../kernel/kernel/vfs.c`](../kernel/kernel/vfs.c).
 
-The VFS currently indexes the first Multiboot module as a tar archive and stores pointers directly into that module's memory.
+The VFS indexes the first Multiboot module as a tar archive and stores pointers directly into that module's memory.
 
 Implications:
 
 - The initrd is read-only
 - File contents must stay pinned in RAM
-- There is no directory tree object model yet, only indexed flat file records with path strings
+- There is no directory tree object model yet, only indexed file records with path strings
 
 ## Coding Conventions For This Repo
 
@@ -214,5 +218,5 @@ If you continue extending DFOS, the next high-value kernel tasks are:
 1. Real page-table growth beyond the bootstrap map
 2. Locking primitives for shared kernel subsystems
 3. Reaping and joining kernel tasks
-4. A real vnode/directory-aware VFS
-5. User/kernel privilege separation and a syscall ABI
+4. A real vnode and directory-aware VFS
+5. User and kernel privilege separation plus a syscall ABI

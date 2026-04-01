@@ -1,26 +1,18 @@
 # DFOS
 
-DFOS is a small educational 32-bit x86 kernel that now boots into a structured higher-half environment with:
+DFOS is a small educational 32-bit x86 kernel with a higher-half memory layout, Multiboot handoff parsing, an initrd-backed read-only VFS, early paging and PMM support, PIT-driven scheduling, PS/2 keyboard input, and a small in-kernel debugger.
 
-- Multiboot handoff parsing
-- Multiboot module-backed initrd loading
-- GDT setup
-- IDT and interrupt stubs
-- PIC remapping and PIT timer interrupts
-- A multithreaded kernel scheduler
-- PS/2 keyboard input
-- A small internal kernel debugger
-- Read-only initrd/VFS support
-- Bootstrap paging plus prepared PAE paging tables
-- A physical page-frame allocator
-- An early kernel heap / memory manager
-- Stack-smash protection hooks
-- More capable formatted printing
-- Cleaner build and run entry points
+## Project Layout
+
+- [`kernel/`](kernel/) contains the architecture-specific boot code and kernel subsystems.
+- [`libc/`](libc/) contains the freestanding support library used by the kernel.
+- [`initrd/`](initrd/) contains the files packed into the boot-time ramdisk.
+- [`scripts/`](scripts/) contains the build, ISO, GRUB, and QEMU helper scripts.
+- [`docs/`](docs/) contains the project documentation index and guides.
 
 ## Requirements
 
-The intended toolchain is an `i686-elf` cross compiler:
+The intended toolchain is an `i686-elf` cross compiler plus a few host tools:
 
 - `i686-elf-gcc`
 - `i686-elf-ar`
@@ -30,47 +22,44 @@ The intended toolchain is an `i686-elf` cross compiler:
 - `wget`
 - `qemu-system-i386`
 
-For legacy BIOS ISO generation on `arm64` Ubuntu hosts, the build can download the GRUB `i386-pc` platform files into `compile/grub/i386-pc` automatically. It uses `grub-pc-bin` package metadata from `apt-cache` and fetches the package with `wget`.
+For legacy BIOS ISO generation on `arm64` Ubuntu hosts, the build can fetch GRUB `i386-pc` platform files into `compile/grub/i386-pc` automatically.
 
-This repository was also adjusted to be friendlier on macOS/BSD userlands where GNU-specific `cp` flags and executable-bit assumptions caused build failures.
-
-## Build
-
-Preferred entry points:
+## Common Commands
 
 ```sh
 make headers
 make build
 make iso
 make run
+make debug
+make boot-layout
 make clean
 make check
 ```
 
-The original shell scripts still exist and are used underneath:
+Direct script entry points are available under [`scripts/`](scripts/):
 
 ```sh
-sh headers.sh
-sh build.sh
-sh iso.sh
-sh qemu.sh
+sh ./scripts/headers.sh
+sh ./scripts/build.sh
+sh ./scripts/iso.sh
+sh ./scripts/qemu.sh
+sh ./scripts/qemu-debug.sh
 ```
-
-The default QEMU launcher attaches `dfos.iso` as the primary IDE CD-ROM and forces `boot order=d` so firmware does not skip past the installation media. The ISO build now generates the BIOS El Torito boot image explicitly with `grub-mkimage -O i386-pc-eltorito`, which keeps ISO output consistent even on `arm64` build hosts.
 
 ## Notes
 
 - The kernel currently boots with legacy 32-bit paging enabled from assembly.
-- PAE support is detected at runtime and matching PAE page tables are prepared in C, but the kernel does not yet switch the live MMU into PAE mode during bootstrap.
-- The multitasking model is kernel-only and uses timer-driven context switching between kernel threads that share one address space.
-- The heap is still an early kernel heap, but paging and PMM helpers now also expose page-level allocation/mapping inside the bootstrap window.
-- Keyboard support currently targets a PS/2 controller with set-1 scancodes.
+- PAE support is detected at runtime and matching page tables are prepared, but the live MMU is not switched into PAE mode yet.
+- The multitasking model is kernel-only and uses timer-driven context switching between kernel threads in one shared address space.
+- The heap is still an early bootstrap heap backed by the initial paging window.
 - Press `F1` at runtime to enter the internal kernel debugger.
 
 ## Documentation
 
-- [Kernel Architecture](docs/kernel-architecture.md)
+- [Documentation Index](docs/README.md)
 - [Build And Workflow](docs/build-and-workflow.md)
+- [Kernel Architecture](docs/kernel-architecture.md)
 - [Kernel Developer Guide](docs/developer-kernel-guide.md)
 - [Application Developer Guide](docs/application-developer-guide.md)
 - [User Guide](docs/user-guide.md)

@@ -2,8 +2,9 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
-GRUB_WORK_ROOT=${GRUB_WORK_ROOT:-"$SCRIPT_DIR/compile/grub"}
+GRUB_WORK_ROOT=${GRUB_WORK_ROOT:-"$REPO_ROOT/compile/grub"}
 GRUB_SOURCE_DIR=${GRUB_SOURCE_DIR:-"$GRUB_WORK_ROOT/source"}
 GRUB_BUILD_DIR=${GRUB_BUILD_DIR:-"$GRUB_WORK_ROOT/build/i386-pc"}
 GRUB_INSTALL_ROOT=${GRUB_INSTALL_ROOT:-"$GRUB_WORK_ROOT/install"}
@@ -16,7 +17,7 @@ HOST_CC=${HOST_CC:-cc}
 HOST_CFLAGS=${HOST_CFLAGS:--O2}
 GRUB_CONFIGURE_FLAGS=${GRUB_CONFIGURE_FLAGS:---disable-werror --disable-nls}
 
-CROSS_TARGET=${CROSS_TARGET:-$(cd "$SCRIPT_DIR" && sh ./default-host.sh)}
+CROSS_TARGET=${CROSS_TARGET:-$(sh "$SCRIPT_DIR/default-host.sh")}
 TARGET_AR=${TARGET_AR:-${CROSS_TARGET}-ar}
 TARGET_AS=${TARGET_AS:-${CROSS_TARGET}-as}
 TARGET_CC=${TARGET_CC:-${CROSS_TARGET}-gcc}
@@ -164,5 +165,5 @@ grub-mkimage binary:   $GRUB_INSTALL_ROOT/usr/bin/grub-mkimage
 grub-file binary:      $GRUB_INSTALL_ROOT/usr/bin/grub-file
 i386-pc program files: $GRUB_INSTALL_ROOT/usr/lib/grub/i386-pc
 
-iso.sh will automatically use this local install when system GRUB tools are not available.
+scripts/iso.sh will automatically use this local install when system GRUB tools are not available.
 EOF
