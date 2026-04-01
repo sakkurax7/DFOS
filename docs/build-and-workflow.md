@@ -37,7 +37,7 @@ The repository uses:
 - [`headers.sh`](/Users/n1le/Documents/Projects/DFOS/headers.sh) for sysroot header install
 - [`build.sh`](/Users/n1le/Documents/Projects/DFOS/build.sh) for project builds
 - [`iso.sh`](/Users/n1le/Documents/Projects/DFOS/iso.sh) for ISO generation
-- [`qemu.sh`](/Users/n1le/Documents/Projects/DFOS/qemu.sh) for emulator launch
+- [`qemu.sh`](/Users/n1le/Documents/Projects/DFOS/qemu.sh) for emulator launch with the ISO attached as the first IDE CD-ROM and `boot order=d`
 - [`initrd.sh`](/Users/n1le/Documents/Projects/DFOS/initrd.sh) for tar-based initrd generation
 
 ## Cleanup Changes

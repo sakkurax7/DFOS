@@ -31,6 +31,7 @@ Important:
 
 - You need the expected cross compiler, GRUB tools, and QEMU installed first
 - The project currently targets an `i686-elf` toolchain
+- The bundled launcher forces QEMU to boot from the generated ISO first, which helps when firmware would otherwise fall through to another device
 
 ## Basic Runtime Behavior
 
@@ -88,6 +89,15 @@ Check that:
 
 - QEMU is emulating a normal PC keyboard
 - You are pressing `F1` inside the QEMU window, not your host terminal
+
+### QEMU skips the ISO and never reaches GRUB
+
+Check that:
+
+- You launched the VM through [`qemu.sh`](/Users/n1le/Documents/Projects/DFOS/qemu.sh) or `make run`, not a stale custom command line
+- The guest is using legacy PC BIOS boot for this image, not a UEFI-only firmware configuration
+- `dfos.iso` was rebuilt successfully before launch
+- Your local `grub-mkrescue` installation actually produced a BIOS-bootable El Torito image; on some hosts the generated ISO can end up UEFI-only even though the kernel itself is valid Multiboot
 
 ### The system halts with a panic
 

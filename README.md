@@ -52,6 +52,8 @@ sh iso.sh
 sh qemu.sh
 ```
 
+The default QEMU launcher attaches `dfos.iso` as the primary IDE CD-ROM and forces `boot order=d` so firmware does not skip past the installation media. The ISO build also validates that the finished image advertises a BIOS El Torito boot entry before treating the build as successful.
+
 ## Notes
 
 - The kernel currently boots with legacy 32-bit paging enabled from assembly.
