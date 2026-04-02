@@ -57,7 +57,7 @@ See [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c).
 
 Current initialization sequence:
 
-1. Platform driver registration
+1. Platform module registration and driver selection
 2. Console
 3. Stack protector seed
 4. Multiboot validation
@@ -79,7 +79,7 @@ That order matters. In particular:
 
 - `pmm_init` depends on bootstrap paging helpers already being usable
 - `heap_init` depends on the PMM reserving the bitmap and kernel image
-- `input_initialize` depends on the active platform drivers already being registered
+- `input_initialize` depends on the active platform modules already being registered and selected
 - `timer_initialize` depends on the IRQ controller being live
 - `kdebug_init` depends on both the scheduler and input driver
 
@@ -92,6 +92,7 @@ The kernel-facing hardware APIs live in:
 - [`../kernel/include/kernel/irq.h`](../kernel/include/kernel/irq.h)
 - [`../kernel/include/kernel/timer.h`](../kernel/include/kernel/timer.h)
 - [`../kernel/include/kernel/cpu.h`](../kernel/include/kernel/cpu.h)
+- [`../kernel/include/kernel/module.h`](../kernel/include/kernel/module.h)
 
 The matching generic dispatch layers live in:
 
@@ -99,12 +100,13 @@ The matching generic dispatch layers live in:
 - [`../kernel/kernel/input.c`](../kernel/kernel/input.c)
 - [`../kernel/kernel/irq.c`](../kernel/kernel/irq.c)
 - [`../kernel/kernel/timer.c`](../kernel/kernel/timer.c)
+- [`../kernel/kernel/module.c`](../kernel/kernel/module.c)
 
-The current i386 platform registers one concrete implementation for each service in [`../kernel/arch/i386/platform.c`](../kernel/arch/i386/platform.c).
+The current i386 platform registers module descriptors in [`../kernel/arch/i386/platform.c`](../kernel/arch/i386/platform.c) and then activates the appropriate implementations.
 
 Current bindings:
 
-- Console: [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c)
+- Console: [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c) and [`../kernel/arch/i386/serial_console.c`](../kernel/arch/i386/serial_console.c)
 - Input: [`../kernel/arch/i386/ps2_keyboard.c`](../kernel/arch/i386/ps2_keyboard.c)
 - IRQ controller: [`../kernel/arch/i386/pic.c`](../kernel/arch/i386/pic.c)
 - Timer: [`../kernel/arch/i386/pit_timer.c`](../kernel/arch/i386/pit_timer.c)
@@ -114,6 +116,25 @@ Rule of thumb:
 
 - If code can be written in terms of `console_*`, `input_*`, `timer_*`, `irq_*`, or `cpu_*`, it belongs in generic kernel code.
 - If code needs `x86_outb`, `x86_inb`, descriptor tables, raw IRQ controller knowledge, or device-specific MMIO addresses, it belongs under the architecture tree.
+
+## Module Selection Pattern
+
+See [`../kernel/include/kernel/module.h`](../kernel/include/kernel/module.h) and [`../kernel/kernel/module.c`](../kernel/kernel/module.c).
+
+Each hardware module declares:
+
+- A `module_kind_t`
+- A priority
+- An optional `probe` callback
+- An `activate` callback that registers the concrete driver with the generic service layer
+
+Use the registry like this:
+
+- For shared output paths such as consoles, register all viable modules and call `module_activate_all`
+- For competing implementations such as PIC vs APIC or PIT vs HPET, register all candidates and call `module_activate_best`
+- If a higher-priority module fails activation, the registry falls back to the next candidate automatically
+
+That gives you one reusable boot-time selection pattern instead of embedding hardware choice logic in every subsystem.
 
 ## Memory Subsystems
 
@@ -213,13 +234,13 @@ Current limits:
 
 ### Console
 
-See [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c) and [`../kernel/kernel/console.c`](../kernel/kernel/console.c).
+See [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c), [`../kernel/arch/i386/serial_console.c`](../kernel/arch/i386/serial_console.c), and [`../kernel/kernel/console.c`](../kernel/kernel/console.c).
 
-The core kernel now writes through the generic console layer. The current backend:
+The core kernel now writes through the generic console layer. The current backends:
 
-- Uses VGA text mode memory
-- Handles scrolling and backspace
-- Is selected at boot by `platform_register_drivers`
+- Use VGA text mode memory for on-screen logs
+- Mirror the same output to COM1 for serial bring-up and debugging
+- Are selected at boot by `platform_register_drivers`
 
 ### Input
 
@@ -275,21 +296,24 @@ Recommended workflow:
 1. Pick the smallest existing interface that fits the new device.
 2. Implement the concrete driver under [`../kernel/arch/i386/`](../kernel/arch/i386/) or a new architecture directory if the work is not i386-specific.
 3. Expose a `const` driver object matching the relevant interface type.
-4. Register that object from [`../kernel/arch/i386/platform.c`](../kernel/arch/i386/platform.c) or the new platform's equivalent.
-5. Add the new source file to the architecture build list in [`../kernel/arch/i386/make.config`](../kernel/arch/i386/make.config).
-6. Validate the boot banners in [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c), which print the active driver names for quick bring-up checks.
+4. Expose a `const module_descriptor_t` that probes and activates that driver.
+5. Register that module from [`../kernel/arch/i386/platform.c`](../kernel/arch/i386/platform.c) or the new platform's equivalent.
+6. Add the new source file to the architecture build list in [`../kernel/arch/i386/make.config`](../kernel/arch/i386/make.config).
+7. Validate the boot banners in [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c), which print the active driver names and module counts for quick bring-up checks.
 
 Rules to follow:
 
 - Keep `x86_*`, raw port I/O, MMIO addresses, and device register definitions inside architecture-specific files.
 - Keep policy and subsystem logic in generic kernel code whenever possible.
 - Register IRQ handlers through `irq_register_handler` and enable lines through `irq_enable`.
+- Keep boot-time hardware choice inside the module registry instead of scattering `if (has_hpet)` or `if (has_apic)` checks across generic code.
 - Return `false` from driver `init` callbacks when the hardware cannot be set up cleanly.
 - Do not let generic code depend on a specific vector number, I/O port, or device memory address.
 
 Minimal timer-driver skeleton:
 
 ```c
+#include <kernel/module.h>
 #include <kernel/irq.h>
 #include <kernel/timer.h>
 
@@ -317,16 +341,29 @@ const timer_driver_t my_timer_driver = {
 	.init = my_timer_init,
 	.frequency_hz = my_timer_frequency_hz,
 };
+
+static bool my_timer_activate(void) {
+	timer_register_driver(&my_timer_driver);
+	return true;
+}
+
+const module_descriptor_t my_timer_module = {
+	.name = "my timer",
+	.kind = MODULE_KIND_TIMER,
+	.priority = 100u,
+	.probe = NULL,
+	.activate = my_timer_activate,
+};
 ```
 
-For a new input or console backend, the same pattern applies: implement the interface in an architecture-specific file, keep device details local, and let the rest of the kernel continue calling the generic service layer.
+For a new input or console backend, the same pattern applies: implement the interface in an architecture-specific file, wrap it in a module descriptor, and let the rest of the kernel continue calling the generic service layer.
 
 ## Adding A New Platform
 
 For a different hardware target, aim for a thin platform assembly layer plus reusable generic subsystems:
 
 - Add a new `kernel/arch/<arch>/` tree with its own bootstrap, linker settings, and `make.config`
-- Provide a platform registration function that binds that platform's console, input, IRQ controller, timer, and CPU helpers
+- Provide a platform registration function that registers that platform's console, input, IRQ controller, timer, and CPU modules
 - Reuse `kernel/kernel/` code unless the subsystem truly depends on architecture behavior
 - Extend the generic interfaces only when two platforms genuinely need a new shared capability
 

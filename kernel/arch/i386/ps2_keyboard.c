@@ -4,6 +4,7 @@
 
 #include <kernel/input.h>
 #include <kernel/irq.h>
+#include <kernel/module.h>
 #include <kernel/x86.h>
 
 #define KEYBOARD_BUFFER_SIZE 256
@@ -121,4 +122,17 @@ const input_driver_t i386_ps2_keyboard_driver = {
 	.read_char_nonblocking = ps2_keyboard_read_char_nonblocking,
 	.debug_requested = ps2_keyboard_debug_requested,
 	.clear_debug_request = ps2_keyboard_clear_debug_request,
+};
+
+static bool ps2_keyboard_activate(void) {
+	input_register_driver(&i386_ps2_keyboard_driver);
+	return true;
+}
+
+const module_descriptor_t i386_ps2_keyboard_module = {
+	.name = "PS/2 keyboard",
+	.kind = MODULE_KIND_INPUT,
+	.priority = 100u,
+	.probe = NULL,
+	.activate = ps2_keyboard_activate,
 };

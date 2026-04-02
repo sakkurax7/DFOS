@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include <kernel/irq.h>
+#include <kernel/module.h>
 #include <kernel/x86.h>
 
 #define PIC1_COMMAND 0x20
@@ -96,4 +97,17 @@ const irq_controller_t i386_pic_irq_controller = {
 	.acknowledge = pic_acknowledge,
 	.vector_for_irq = pic_vector_for_irq,
 	.irq_for_vector = pic_irq_for_vector,
+};
+
+static bool pic_activate(void) {
+	irq_controller_register(&i386_pic_irq_controller);
+	return true;
+}
+
+const module_descriptor_t i386_pic_irq_controller_module = {
+	.name = "8259 PIC",
+	.kind = MODULE_KIND_IRQ_CONTROLLER,
+	.priority = 50u,
+	.probe = NULL,
+	.activate = pic_activate,
 };

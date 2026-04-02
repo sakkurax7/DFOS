@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <kernel/console.h>
+#include <kernel/module.h>
 
 #include "vga.h"
 
@@ -95,4 +96,17 @@ const console_driver_t i386_vga_console_driver = {
 	.clear = vga_console_clear,
 	.putchar = vga_console_putchar,
 	.write = vga_console_write,
+};
+
+static bool vga_console_activate(void) {
+	console_register_driver(&i386_vga_console_driver);
+	return true;
+}
+
+const module_descriptor_t i386_vga_console_module = {
+	.name = "VGA text console",
+	.kind = MODULE_KIND_CONSOLE,
+	.priority = 100u,
+	.probe = NULL,
+	.activate = vga_console_activate,
 };

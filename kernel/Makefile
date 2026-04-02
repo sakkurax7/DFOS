@@ -35,6 +35,7 @@ kernel/input.o \
 kernel/irq.o \
 kernel/kdebug.o \
 kernel/kernel.o \
+kernel/module.o \
 kernel/paging.o \
 kernel/panic.o \
 kernel/pmm.o \

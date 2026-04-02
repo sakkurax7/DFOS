@@ -11,6 +11,7 @@
 #include <kernel/interrupts.h>
 #include <kernel/irq.h>
 #include <kernel/kdebug.h>
+#include <kernel/module.h>
 #include <kernel/paging.h>
 #include <kernel/panic.h>
 #include <kernel/platform.h>
@@ -66,10 +67,16 @@ void kernel_main(uint32_t multiboot_magic, uint32_t multiboot_info_addr) {
 		paging_mode_name(), paging_pae_supported() ? "yes" : "no");
 	printf("PAE tables: %s\n", paging_pae_ready() ? "prepared" : "unavailable");
 	printf("initrd files: %u\n", vfs_file_count());
-	printf("console: %s\n", console_driver_name());
+	printf("console: %s (%u backend%s)\n", console_driver_name(),
+		(unsigned) console_driver_count(), console_driver_count() == 1 ? "" : "s");
 	printf("input: %s\n", input_driver_name());
 	printf("timer: %s @ %u Hz\n", timer_driver_name(), timer_frequency_hz());
 	printf("irq controller: %s\n", irq_controller_name());
+	printf("module candidates: %u console, %u input, %u timer, %u irq\n",
+		(unsigned) module_registered_count(MODULE_KIND_CONSOLE),
+		(unsigned) module_registered_count(MODULE_KIND_INPUT),
+		(unsigned) module_registered_count(MODULE_KIND_TIMER),
+		(unsigned) module_registered_count(MODULE_KIND_IRQ_CONTROLLER));
 	printf("debug hotkey: F1\n");
 
 	scheduler_create_kernel_task("worker-a", worker_task, "worker-a");

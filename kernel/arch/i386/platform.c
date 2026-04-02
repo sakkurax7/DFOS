@@ -1,17 +1,21 @@
-#include <kernel/console.h>
-#include <kernel/input.h>
-#include <kernel/irq.h>
+#include <kernel/module.h>
 #include <kernel/platform.h>
-#include <kernel/timer.h>
 
-extern const console_driver_t i386_vga_console_driver;
-extern const input_driver_t i386_ps2_keyboard_driver;
-extern const irq_controller_t i386_pic_irq_controller;
-extern const timer_driver_t i386_pit_timer_driver;
+extern const module_descriptor_t i386_pic_irq_controller_module;
+extern const module_descriptor_t i386_pit_timer_module;
+extern const module_descriptor_t i386_ps2_keyboard_module;
+extern const module_descriptor_t i386_serial_console_module;
+extern const module_descriptor_t i386_vga_console_module;
 
 void platform_register_drivers(void) {
-	console_register_driver(&i386_vga_console_driver);
-	input_register_driver(&i386_ps2_keyboard_driver);
-	irq_controller_register(&i386_pic_irq_controller);
-	timer_register_driver(&i386_pit_timer_driver);
+	module_register(&i386_vga_console_module);
+	module_register(&i386_serial_console_module);
+	module_register(&i386_ps2_keyboard_module);
+	module_register(&i386_pic_irq_controller_module);
+	module_register(&i386_pit_timer_module);
+
+	module_activate_all(MODULE_KIND_CONSOLE);
+	module_activate_best(MODULE_KIND_INPUT);
+	module_activate_best(MODULE_KIND_IRQ_CONTROLLER);
+	module_activate_best(MODULE_KIND_TIMER);
 }

@@ -19,5 +19,6 @@ void console_putchar(char c);
 void console_write(const char* data, size_t size);
 void console_writestring(const char* data);
 const char* console_driver_name(void);
+size_t console_driver_count(void);
 
 #endif

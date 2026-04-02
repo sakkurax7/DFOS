@@ -9,6 +9,7 @@ When DFOS boots successfully, you should see:
 - Boot status messages
 - Memory and paging information
 - The active console, input, timer, and IRQ controller names
+- The same kernel log mirrored into the terminal running QEMU through the serial console
 - Periodic heartbeat lines from worker tasks
 
 ## Starting DFOS
@@ -43,7 +44,7 @@ make debug
 
 At boot DFOS:
 
-- Registers the current platform drivers
+- Registers the current platform modules
 - Initializes the active console
 - Sets up memory management
 - Initializes input, the IRQ controller, and the system timer
@@ -51,6 +52,14 @@ At boot DFOS:
 - Loads files from the initrd
 
 The worker tasks print heartbeat messages so you can tell the scheduler is alive.
+
+## Serial Console
+
+The default QEMU launchers already pass `-serial stdio`, and DFOS now enables a COM1 serial console backend during boot. In practice that means:
+
+- The QEMU window still shows VGA text output
+- The host terminal running `make run` or `make debug` also receives kernel logs
+- Early bring-up and panic messages are easier to capture, copy, and compare
 
 ## Input And Debugger
 

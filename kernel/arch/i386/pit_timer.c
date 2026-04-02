@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <kernel/module.h>
 #include <kernel/irq.h>
 #include <kernel/timer.h>
 #include <kernel/x86.h>
@@ -32,4 +33,17 @@ const timer_driver_t i386_pit_timer_driver = {
 	.name = "8253/8254 PIT",
 	.init = pit_timer_init,
 	.frequency_hz = pit_timer_frequency_hz,
+};
+
+static bool pit_timer_activate(void) {
+	timer_register_driver(&i386_pit_timer_driver);
+	return true;
+}
+
+const module_descriptor_t i386_pit_timer_module = {
+	.name = "8253/8254 PIT",
+	.kind = MODULE_KIND_TIMER,
+	.priority = 50u,
+	.probe = NULL,
+	.activate = pit_timer_activate,
 };

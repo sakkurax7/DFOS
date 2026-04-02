@@ -12,7 +12,7 @@ The source tree is split into three layers:
 
 Initialization order in [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c):
 
-1. Platform driver registration
+1. Platform module registration and driver selection
 2. Active console initialization
 3. Stack protector seed
 4. Multiboot validation
@@ -38,16 +38,31 @@ The kernel now routes hardware-facing work through small generic service interfa
 - [`../kernel/include/kernel/irq.h`](../kernel/include/kernel/irq.h) and [`../kernel/kernel/irq.c`](../kernel/kernel/irq.c) for IRQ controller registration, logical IRQ lines, handler hookup, and acknowledgement
 - [`../kernel/include/kernel/timer.h`](../kernel/include/kernel/timer.h) and [`../kernel/kernel/timer.c`](../kernel/kernel/timer.c) for the system tick source
 - [`../kernel/include/kernel/cpu.h`](../kernel/include/kernel/cpu.h) for CPU-local helpers such as `hlt` and capability checks
+- [`../kernel/include/kernel/module.h`](../kernel/include/kernel/module.h) and [`../kernel/kernel/module.c`](../kernel/kernel/module.c) for static hardware-module registration, probing, and priority-based activation
 
 The current i386 PC platform binds those interfaces in [`../kernel/arch/i386/platform.c`](../kernel/arch/i386/platform.c):
 
 - [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c)
+- [`../kernel/arch/i386/serial_console.c`](../kernel/arch/i386/serial_console.c)
 - [`../kernel/arch/i386/ps2_keyboard.c`](../kernel/arch/i386/ps2_keyboard.c)
 - [`../kernel/arch/i386/pic.c`](../kernel/arch/i386/pic.c)
 - [`../kernel/arch/i386/pit_timer.c`](../kernel/arch/i386/pit_timer.c)
 - [`../kernel/arch/i386/cpu.c`](../kernel/arch/i386/cpu.c)
 
-Core kernel code should use the generic interfaces, not fixed x86 port numbers or platform-specific helper names.
+The console layer can now fan out to more than one backend at a time, which lets early logs appear on both VGA and serial output. Other services still select a single active implementation, chosen by module priority and probe result.
+
+Core kernel code should use the generic interfaces and the module layer, not fixed x86 port numbers or platform-specific helper names.
+
+## Module Registry
+
+[`../kernel/kernel/module.c`](../kernel/kernel/module.c) provides a small static selection mechanism for hardware backends:
+
+- Modules register a name, kind, priority, optional `probe`, and `activate` callback
+- Console modules are activated with `module_activate_all`, so multiple output backends can coexist
+- Input, timer, and IRQ-controller modules are activated with `module_activate_best`, so the highest-priority working implementation wins
+- Activation falls back to lower-priority candidates if a higher-priority module fails
+
+This is the intended path for future APIC-vs-PIC, HPET-vs-PIT, or storage-controller bring-up work.
 
 ## GDT
 
@@ -165,6 +180,11 @@ The kernel consumes the first Multiboot module as a tar-backed initialization ra
 
 ## Console And Diagnostics
 
-[`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c) is the current console implementation. It supports newline handling, backspace, and scrolling so boot logs and panic messages remain readable.
+The current platform exposes two console backends through the generic console layer:
+
+- [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c) for VGA text-mode output with scrolling and backspace support
+- [`../kernel/arch/i386/serial_console.c`](../kernel/arch/i386/serial_console.c) for polled COM1 output through a 16550-compatible UART
+
+With the default QEMU launchers, serial output is visible in the host terminal because they already use `-serial stdio`.
 
 [`../kernel/kernel/panic.c`](../kernel/kernel/panic.c) now goes through the generic console and CPU interfaces, which keeps the panic path portable across future hardware backends.
