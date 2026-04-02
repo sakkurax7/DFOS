@@ -27,7 +27,8 @@ static void worker_task(void* arg) {
 
 	while (true) {
 		// Demo worker threads give the scheduler, timer, and printf paths visible activity.
-		printf("[task:%s] heartbeat %u (tick %u)\n", name, counter++, scheduler_ticks());
+		// Disabled since its annoying
+		// printf("[task:%s] heartbeat %u (tick %u)\n", name, counter++, scheduler_ticks());
 		scheduler_sleep(25);
 	}
 }
