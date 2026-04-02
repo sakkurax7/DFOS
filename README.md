@@ -1,10 +1,12 @@
 # DFOS
 
-DFOS is a small educational 32-bit x86 kernel with a higher-half memory layout, Multiboot handoff parsing, an initrd-backed read-only VFS, early paging and PMM support, PIT-driven scheduling, PS/2 keyboard input, and a small in-kernel debugger.
+DFOS is a small educational 32-bit x86 kernel with a higher-half memory layout, Multiboot handoff parsing, an initrd-backed read-only VFS, early paging and PMM support, timer-driven scheduling, a small in-kernel debugger, and a hardware abstraction layer for console, input, timer, IRQ, and CPU services.
 
 ## Project Layout
 
-- [`kernel/`](kernel/) contains the architecture-specific boot code and kernel subsystems.
+- [`kernel/include/`](kernel/include/) contains shared kernel interfaces, including the hardware abstraction headers.
+- [`kernel/kernel/`](kernel/kernel/) contains architecture-neutral kernel subsystems and the generic hardware service facades.
+- [`kernel/arch/i386/`](kernel/arch/i386/) contains the current i386 PC bootstrap code and hardware driver implementations.
 - [`libc/`](libc/) contains the freestanding support library used by the kernel.
 - [`initrd/`](initrd/) contains the files packed into the boot-time ramdisk.
 - [`scripts/`](scripts/) contains the build, ISO, GRUB, and QEMU helper scripts.
@@ -53,6 +55,7 @@ sh ./scripts/qemu-debug.sh
 - PAE support is detected at runtime and matching page tables are prepared, but the live MMU is not switched into PAE mode yet.
 - The multitasking model is kernel-only and uses timer-driven context switching between kernel threads in one shared address space.
 - The heap is still an early bootstrap heap backed by the initial paging window.
+- The current i386 platform wires a VGA text console, PS/2 keyboard, 8259 PIC, and 8253/8254 PIT into the generic kernel interfaces through [`kernel/arch/i386/platform.c`](kernel/arch/i386/platform.c).
 - Press `F1` at runtime to enter the internal kernel debugger.
 
 ## Documentation

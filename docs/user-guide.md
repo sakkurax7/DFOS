@@ -8,7 +8,7 @@ When DFOS boots successfully, you should see:
 
 - Boot status messages
 - Memory and paging information
-- A note that the keyboard is active
+- The active console, input, timer, and IRQ controller names
 - Periodic heartbeat lines from worker tasks
 
 ## Starting DFOS
@@ -43,17 +43,18 @@ make debug
 
 At boot DFOS:
 
-- Initializes the screen
+- Registers the current platform drivers
+- Initializes the active console
 - Sets up memory management
-- Starts interrupts and the system timer
+- Initializes input, the IRQ controller, and the system timer
 - Starts a few background kernel tasks
 - Loads files from the initrd
 
 The worker tasks print heartbeat messages so you can tell the scheduler is alive.
 
-## Keyboard And Debugger
+## Input And Debugger
 
-The keyboard driver currently targets a PS/2 keyboard model in QEMU-compatible PC environments.
+The current platform input driver targets a PS/2 keyboard model in QEMU-compatible PC environments.
 
 Press `F1` to enter the built-in kernel debugger.
 

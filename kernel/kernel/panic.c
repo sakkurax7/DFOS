@@ -3,13 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <kernel/console.h>
+#include <kernel/cpu.h>
 #include <kernel/interrupts.h>
 #include <kernel/panic.h>
-#include <kernel/tty.h>
-#include <kernel/x86.h>
 
 static void panic_write_char(char c) {
-	terminal_putchar(c);
+	console_putchar(c);
 }
 
 static void panic_write_string(const char* text) {
@@ -79,5 +79,5 @@ void panic(const char* format, ...) {
 	panic_write_string("\nSystem halted.\n");
 
 	while (true)
-		x86_hlt();
+		cpu_halt();
 }

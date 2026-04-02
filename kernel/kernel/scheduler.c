@@ -10,6 +10,7 @@
 
 #define MAX_TASKS         16
 #define TASK_STACK_SIZE   16384
+#define SCHEDULER_YIELD_VECTOR 48u
 #define TIME_SLICE_TICKS  5
 
 typedef enum task_state {
@@ -107,6 +108,7 @@ void scheduler_init(void) {
 	ticks_since_switch = 0;
 	system_ticks = 0;
 	next_task_id = 1;
+	register_interrupt_handler(SCHEDULER_YIELD_VECTOR, scheduler_on_yield);
 }
 
 void scheduler_bootstrap_current(const char* name) {
@@ -139,7 +141,7 @@ bool scheduler_create_kernel_task(const char* name, kernel_task_entry_t entry, v
 	frame->edx = 0;
 	frame->ecx = 0;
 	frame->eax = 0;
-	frame->vector = 48;
+	frame->vector = SCHEDULER_YIELD_VECTOR;
 	frame->error_code = 0;
 	frame->eip = (uint32_t) task_trampoline;
 	frame->cs = 0x08;
@@ -181,7 +183,7 @@ void scheduler_sleep(uint32_t ticks) {
 	task->wakeup_tick = system_ticks + ticks;
 	task->state = TASK_SLEEPING;
 	// Reuse the scheduler's software interrupt path so sleep and explicit yield share one exit.
-	asm volatile("int $48");
+	asm volatile("int %0" : : "i"(SCHEDULER_YIELD_VECTOR));
 }
 
 uint32_t scheduler_ticks(void) {
@@ -189,7 +191,7 @@ uint32_t scheduler_ticks(void) {
 }
 
 void scheduler_yield(void) {
-	asm volatile("int $48");
+	asm volatile("int %0" : : "i"(SCHEDULER_YIELD_VECTOR));
 }
 
 __attribute__((__noreturn__))

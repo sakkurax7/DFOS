@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <kernel/input.h>
 #include <kernel/kdebug.h>
-#include <kernel/keyboard.h>
 #include <kernel/pmm.h>
 #include <kernel/scheduler.h>
 #include <kernel/vfs.h>
@@ -87,8 +87,8 @@ static void kdebug_task(void* arg) {
 	size_t line_length = 0;
 
 	while (true) {
-		if (!debugger_active && keyboard_debug_requested()) {
-			keyboard_clear_debug_request();
+		if (!debugger_active && input_debug_requested()) {
+			input_clear_debug_request();
 			debugger_active = true;
 			printf("\nentered kernel debugger, type 'help'\n");
 			kdebug_print_prompt();
@@ -100,7 +100,7 @@ static void kdebug_task(void* arg) {
 		}
 
 		char c;
-		if (!keyboard_getchar_nonblocking(&c)) {
+		if (!input_read_char_nonblocking(&c)) {
 			// The debugger is a normal scheduler task, so it sleeps instead of spinning.
 			scheduler_sleep(1);
 			continue;

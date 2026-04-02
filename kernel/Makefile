@@ -29,7 +29,10 @@ LIBS:=$(LIBS) $(KERNEL_ARCH_LIBS)
 
 KERNEL_OBJS=\
 $(KERNEL_ARCH_OBJS) \
+kernel/console.o \
 kernel/heap.o \
+kernel/input.o \
+kernel/irq.o \
 kernel/kdebug.o \
 kernel/kernel.o \
 kernel/paging.o \
@@ -37,6 +40,7 @@ kernel/panic.o \
 kernel/pmm.o \
 kernel/scheduler.o \
 kernel/stack_protector.o \
+kernel/timer.o \
 kernel/vfs.o \
 
 OBJS=\

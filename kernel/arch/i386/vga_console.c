@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <kernel/tty.h>
+#include <kernel/console.h>
 
 #include "vga.h"
 
@@ -28,7 +28,7 @@ static void terminal_scroll(void) {
 		terminal_buffer[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
 }
 
-void terminal_clear(void) {
+static void vga_console_clear(void) {
 	for (size_t y = 0; y < VGA_HEIGHT; y++) {
 		for (size_t x = 0; x < VGA_WIDTH; x++) {
 			const size_t index = y * VGA_WIDTH + x;
@@ -39,22 +39,21 @@ void terminal_clear(void) {
 	terminal_column = 0;
 }
 
-void terminal_initialize(void) {
+static bool vga_console_init(void) {
 	terminal_row = 0;
 	terminal_column = 0;
 	terminal_color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
 	terminal_buffer = VGA_MEMORY;
-	terminal_clear();
+	vga_console_clear();
+	return true;
 }
 
-void terminal_setcolor(uint8_t color) { terminal_color = color; }
-
-void terminal_putentryat(unsigned char c, uint8_t color, size_t x, size_t y) {
+static void terminal_putentryat(unsigned char c, uint8_t color, size_t x, size_t y) {
 	const size_t index = y * VGA_WIDTH + x;
 	terminal_buffer[index] = vga_entry(c, color);
 }
 
-void terminal_putchar(char c) {
+static void vga_console_putchar(char c) {
 	if (c == '\b') {
 		if (terminal_column > 0) {
 			terminal_column--;
@@ -75,8 +74,7 @@ void terminal_putchar(char c) {
 		return;
 	}
 
-	unsigned char uc = c;
-	terminal_putentryat(uc, terminal_color, terminal_column, terminal_row);
+	terminal_putentryat((unsigned char) c, terminal_color, terminal_column, terminal_row);
 	if (++terminal_column == VGA_WIDTH) {
 		terminal_column = 0;
 		if (++terminal_row == VGA_HEIGHT) {
@@ -86,9 +84,15 @@ void terminal_putchar(char c) {
 	}
 }
 
-void terminal_write(const char* data, size_t size) {
+static void vga_console_write(const char* data, size_t size) {
 	for (size_t i = 0; i < size; i++)
-		terminal_putchar(data[i]);
+		vga_console_putchar(data[i]);
 }
 
-void terminal_writestring(const char* data) { terminal_write(data, strlen(data)); }
+const console_driver_t i386_vga_console_driver = {
+	.name = "VGA text console",
+	.init = vga_console_init,
+	.clear = vga_console_clear,
+	.putchar = vga_console_putchar,
+	.write = vga_console_write,
+};

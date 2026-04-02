@@ -25,8 +25,5 @@ void idt_init(void);
 void interrupts_enable(void);
 void interrupts_disable(void);
 void register_interrupt_handler(uint8_t vector, interrupt_handler_t handler);
-void interrupts_irq_unmask(uint8_t irq);
-void interrupts_irq_mask(uint8_t irq);
-void pit_init(uint32_t frequency_hz);
 
 #endif
