@@ -4,22 +4,65 @@
 
 The kernel boots through a Multiboot-compatible 32-bit entry point in [`../kernel/arch/i386/boot.S`](../kernel/arch/i386/boot.S). Early bootstrap data and paging structures are split into dedicated sections so the linker can keep the page directory and page table aligned for the first paging transition.
 
+The source tree is split into three layers:
+
+- [`../kernel/include/kernel/`](../kernel/include/kernel/) defines the kernel-facing interfaces.
+- [`../kernel/kernel/`](../kernel/kernel/) contains architecture-neutral subsystems and the generic hardware service facades.
+- [`../kernel/arch/i386/`](../kernel/arch/i386/) contains the current i386 PC bootstrap code and hardware implementations.
+
 Initialization order in [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c):
 
-1. VGA terminal initialization
-2. Stack protector seed
-3. Multiboot validation
-4. GDT installation
-5. IDT installation
-6. Paging capability setup
-7. Physical memory manager initialization
-8. Early heap initialization
-9. Keyboard setup
-10. Initrd/VFS setup
-11. PIT timer start
-12. Scheduler setup and bootstrap task registration
-13. Debugger task creation and worker task creation
-14. Interrupt enable and idle loop
+1. Platform module registration and driver selection
+2. Active console initialization
+3. Stack protector seed
+4. Multiboot validation
+5. GDT installation
+6. IDT installation and IRQ controller initialization
+7. Paging capability setup
+8. Physical memory manager initialization
+9. Early heap initialization
+10. Active input driver initialization
+11. Initrd/VFS setup
+12. Scheduler setup
+13. Active timer driver initialization
+14. Bootstrap task registration
+15. Debugger task creation and worker task creation
+16. Interrupt enable and idle loop
+
+## Hardware Abstraction Layer
+
+The kernel now routes hardware-facing work through small generic service interfaces:
+
+- [`../kernel/include/kernel/console.h`](../kernel/include/kernel/console.h) and [`../kernel/kernel/console.c`](../kernel/kernel/console.c) for text output
+- [`../kernel/include/kernel/input.h`](../kernel/include/kernel/input.h) and [`../kernel/kernel/input.c`](../kernel/kernel/input.c) for character input and debugger hotkey checks
+- [`../kernel/include/kernel/irq.h`](../kernel/include/kernel/irq.h) and [`../kernel/kernel/irq.c`](../kernel/kernel/irq.c) for IRQ controller registration, logical IRQ lines, handler hookup, and acknowledgement
+- [`../kernel/include/kernel/timer.h`](../kernel/include/kernel/timer.h) and [`../kernel/kernel/timer.c`](../kernel/kernel/timer.c) for the system tick source
+- [`../kernel/include/kernel/cpu.h`](../kernel/include/kernel/cpu.h) for CPU-local helpers such as `hlt` and capability checks
+- [`../kernel/include/kernel/module.h`](../kernel/include/kernel/module.h) and [`../kernel/kernel/module.c`](../kernel/kernel/module.c) for static hardware-module registration, probing, and priority-based activation
+
+The current i386 PC platform binds those interfaces in [`../kernel/arch/i386/platform.c`](../kernel/arch/i386/platform.c):
+
+- [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c)
+- [`../kernel/arch/i386/serial_console.c`](../kernel/arch/i386/serial_console.c)
+- [`../kernel/arch/i386/ps2_keyboard.c`](../kernel/arch/i386/ps2_keyboard.c)
+- [`../kernel/arch/i386/pic.c`](../kernel/arch/i386/pic.c)
+- [`../kernel/arch/i386/pit_timer.c`](../kernel/arch/i386/pit_timer.c)
+- [`../kernel/arch/i386/cpu.c`](../kernel/arch/i386/cpu.c)
+
+The console layer can now fan out to more than one backend at a time, which lets early logs appear on both VGA and serial output. Other services still select a single active implementation, chosen by module priority and probe result.
+
+Core kernel code should use the generic interfaces and the module layer, not fixed x86 port numbers or platform-specific helper names.
+
+## Module Registry
+
+[`../kernel/kernel/module.c`](../kernel/kernel/module.c) provides a small static selection mechanism for hardware backends:
+
+- Modules register a name, kind, priority, optional `probe`, and `activate` callback
+- Console modules are activated with `module_activate_all`, so multiple output backends can coexist
+- Input, timer, and IRQ-controller modules are activated with `module_activate_best`, so the highest-priority working implementation wins
+- Activation falls back to lower-priority candidates if a higher-priority module fails
+
+This is the intended path for future APIC-vs-PIC, HPET-vs-PIT, or storage-controller bring-up work.
 
 ## GDT
 
@@ -33,20 +76,32 @@ Initialization order in [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c)
 
 [`../kernel/arch/i386/gdt_flush.S`](../kernel/arch/i386/gdt_flush.S) reloads segment registers and performs the far jump needed to activate the new code segment.
 
-## Interrupts
+## Interrupts And IRQ Routing
 
 The interrupt path is split into two pieces:
 
 - [`../kernel/arch/i386/interrupts_asm.S`](../kernel/arch/i386/interrupts_asm.S): raw ISR stubs, register save and restore, and `iret`
-- [`../kernel/arch/i386/interrupts.c`](../kernel/arch/i386/interrupts.c): IDT construction, PIC remap, handler registration, dispatch, and exception panic handling
+- [`../kernel/arch/i386/interrupts.c`](../kernel/arch/i386/interrupts.c): IDT construction, handler registration, dispatch, and exception panic handling
+
+Hardware IRQ routing is split again:
+
+- [`../kernel/kernel/irq.c`](../kernel/kernel/irq.c): controller-neutral IRQ registration and vector-to-line translation
+- [`../kernel/arch/i386/pic.c`](../kernel/arch/i386/pic.c): current 8259 PIC implementation
 
 Implemented vectors:
 
 - `0-31`: CPU exceptions
-- `32-47`: PIC IRQ window
+- `32-47`: current PIC IRQ window
 - `48`: software yield interrupt used by the scheduler
 
-Timer interrupts are routed through IRQ0 and dispatched to the scheduler. IRQ1 is used by the PS/2 keyboard driver. Page faults are trapped and reported with CR2 and the hardware error code.
+Timer interrupts are routed through logical `IRQ_LINE_TIMER` and dispatched to the scheduler by the active timer driver. Logical `IRQ_LINE_KEYBOARD` is currently backed by the PS/2 keyboard driver. Page faults are trapped and reported with CR2 and the hardware error code.
+
+## CPU Helpers
+
+[`../kernel/include/kernel/cpu.h`](../kernel/include/kernel/cpu.h) exposes the small CPU-facing surface the rest of the kernel uses today. The current implementation in [`../kernel/arch/i386/cpu.c`](../kernel/arch/i386/cpu.c) provides:
+
+- PAE capability detection
+- CPU halt in the idle and panic paths
 
 ## Paging
 
@@ -94,17 +149,17 @@ This is intentionally simple and works as an early-kernel allocator. It is not y
 
 - Fixed task table
 - One kernel stack per task
-- Timer-driven round-robin preemption
+- Timer-driven round-robin preemption through the generic timer service
 - Software-interrupt yield path
 - Tick-based sleep queue
 
 Tasks share the kernel address space and resume by swapping the saved interrupt frame used by the common ISR return path.
 
-## Keyboard And Debugger
+## Input And Debugger
 
-[`../kernel/arch/i386/keyboard.c`](../kernel/arch/i386/keyboard.c) implements a PS/2 keyboard driver using set-1 scancodes and a small ring buffer.
+[`../kernel/arch/i386/ps2_keyboard.c`](../kernel/arch/i386/ps2_keyboard.c) implements the current input driver using PS/2 set-1 scancodes and a small ring buffer.
 
-[`../kernel/kernel/kdebug.c`](../kernel/kernel/kdebug.c) provides an internal debugger task entered with `F1`. Current commands:
+[`../kernel/kernel/kdebug.c`](../kernel/kernel/kdebug.c) polls the generic input interface and provides an internal debugger task entered with `F1`. Current commands:
 
 - `help`
 - `tasks`
@@ -123,8 +178,13 @@ The kernel consumes the first Multiboot module as a tar-backed initialization ra
 
 [`../kernel/kernel/stack_protector.c`](../kernel/kernel/stack_protector.c) defines `__stack_chk_guard` and `__stack_chk_fail`, and the build enables `-fstack-protector-strong`.
 
-## Terminal And Diagnostics
+## Console And Diagnostics
 
-[`../kernel/arch/i386/tty.c`](../kernel/arch/i386/tty.c) supports newline handling and scrolling so boot logs and panic messages remain readable.
+The current platform exposes two console backends through the generic console layer:
 
-[`../kernel/kernel/panic.c`](../kernel/kernel/panic.c) provides a minimal panic path that disables interrupts, prints a formatted message, and halts.
+- [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c) for VGA text-mode output with scrolling and backspace support
+- [`../kernel/arch/i386/serial_console.c`](../kernel/arch/i386/serial_console.c) for polled COM1 output through a 16550-compatible UART
+
+With the default QEMU launchers, serial output is visible in the host terminal because they already use `-serial stdio`.
+
+[`../kernel/kernel/panic.c`](../kernel/kernel/panic.c) now goes through the generic console and CPU interfaces, which keeps the panic path portable across future hardware backends.

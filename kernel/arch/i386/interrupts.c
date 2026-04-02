@@ -4,16 +4,11 @@
 #include <stdio.h>
 
 #include <kernel/interrupts.h>
+#include <kernel/irq.h>
 #include <kernel/panic.h>
-#include <kernel/scheduler.h>
 #include <kernel/x86.h>
 
 #define IDT_ENTRIES 256
-#define PIC1_COMMAND 0x20
-#define PIC1_DATA    0x21
-#define PIC2_COMMAND 0xA0
-#define PIC2_DATA    0xA1
-#define PIC_EOI      0x20
 
 typedef struct idt_entry {
 	uint16_t offset_low;
@@ -52,50 +47,6 @@ static void idt_set_gate(uint8_t vector, uint32_t handler, uint8_t flags) {
 	idt[vector].offset_high = (uint16_t) ((handler >> 16) & 0xFFFF);
 }
 
-static void pic_remap(void) {
-	const uint8_t pic1_mask = x86_inb(PIC1_DATA);
-	const uint8_t pic2_mask = x86_inb(PIC2_DATA);
-
-	x86_outb(PIC1_COMMAND, 0x11);
-	x86_io_wait();
-	x86_outb(PIC2_COMMAND, 0x11);
-	x86_io_wait();
-	x86_outb(PIC1_DATA, 0x20);
-	x86_io_wait();
-	x86_outb(PIC2_DATA, 0x28);
-	x86_io_wait();
-	x86_outb(PIC1_DATA, 0x04);
-	x86_io_wait();
-	x86_outb(PIC2_DATA, 0x02);
-	x86_io_wait();
-	x86_outb(PIC1_DATA, 0x01);
-	x86_io_wait();
-	x86_outb(PIC2_DATA, 0x01);
-	x86_io_wait();
-
-	x86_outb(PIC1_DATA, pic1_mask & (uint8_t) ~0x01);
-	x86_outb(PIC2_DATA, pic2_mask | 0xFF);
-}
-
-static void pic_send_eoi(uint8_t irq) {
-	if (irq >= 8)
-		x86_outb(PIC2_COMMAND, PIC_EOI);
-	x86_outb(PIC1_COMMAND, PIC_EOI);
-}
-
-static void pic_update_mask(uint8_t irq, bool masked) {
-	const uint16_t port = irq < 8 ? PIC1_DATA : PIC2_DATA;
-	const uint8_t bit = (uint8_t) (1u << (irq % 8));
-	uint8_t mask = x86_inb(port);
-
-	if (masked)
-		mask |= bit;
-	else
-		mask &= (uint8_t) ~bit;
-
-	x86_outb(port, mask);
-}
-
 static interrupt_frame_t* default_exception_handler(interrupt_frame_t* frame) {
 	const char* name = "unknown";
 	if (frame->vector < (sizeof(exception_names) / sizeof(exception_names[0])))
@@ -120,8 +71,7 @@ interrupt_frame_t* isr_dispatch(interrupt_frame_t* frame) {
 		next_frame = default_exception_handler(frame);
 	}
 
-	if (frame->vector >= 32 && frame->vector <= 47)
-		pic_send_eoi((uint8_t) (frame->vector - 32));
+	irq_acknowledge_vector((uint8_t) frame->vector);
 
 	return next_frame;
 }
@@ -136,10 +86,10 @@ void idt_init(void) {
 	idt_descriptor.size = sizeof(idt) - 1;
 	idt_descriptor.offset = (uint32_t) &idt;
 
-	pic_remap();
+	if (!irq_controller_initialize())
+		panic("no IRQ controller registered");
+
 	idt_load(&idt_descriptor);
-	register_interrupt_handler(32, scheduler_on_timer_tick);
-	register_interrupt_handler(48, scheduler_on_yield);
 }
 
 void register_interrupt_handler(uint8_t vector, interrupt_handler_t handler) {
@@ -152,12 +102,4 @@ void interrupts_enable(void) {
 
 void interrupts_disable(void) {
 	x86_cli();
-}
-
-void interrupts_irq_unmask(uint8_t irq) {
-	pic_update_mask(irq, false);
-}
-
-void interrupts_irq_mask(uint8_t irq) {
-	pic_update_mask(irq, true);
 }

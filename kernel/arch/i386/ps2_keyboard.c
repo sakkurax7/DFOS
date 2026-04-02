@@ -2,8 +2,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <kernel/interrupts.h>
-#include <kernel/keyboard.h>
+#include <kernel/input.h>
+#include <kernel/irq.h>
+#include <kernel/module.h>
 #include <kernel/x86.h>
 
 #define KEYBOARD_BUFFER_SIZE 256
@@ -27,7 +28,7 @@ static volatile uint32_t buffer_tail;
 static char buffer[KEYBOARD_BUFFER_SIZE];
 static bool shift_down;
 static bool caps_lock;
-static volatile bool debug_requested;
+static volatile bool debugger_requested;
 
 static void keyboard_push_char(char c) {
 	const uint32_t next = (buffer_head + 1) % KEYBOARD_BUFFER_SIZE;
@@ -49,7 +50,7 @@ static char translate_scancode(uint8_t scancode) {
 	return c;
 }
 
-static interrupt_frame_t* keyboard_interrupt(interrupt_frame_t* frame) {
+static interrupt_frame_t* ps2_keyboard_interrupt(interrupt_frame_t* frame) {
 	const uint8_t scancode = x86_inb(0x60);
 
 	if (scancode == 0x2A || scancode == 0x36) {
@@ -68,8 +69,7 @@ static interrupt_frame_t* keyboard_interrupt(interrupt_frame_t* frame) {
 	}
 
 	if (scancode == 0x3B) {
-		// F1 is reserved as a debugger hotkey and is not forwarded as normal input.
-		debug_requested = true;
+		debugger_requested = true;
 		return frame;
 	}
 
@@ -85,17 +85,21 @@ static interrupt_frame_t* keyboard_interrupt(interrupt_frame_t* frame) {
 	return frame;
 }
 
-void keyboard_init(void) {
+static bool ps2_keyboard_init(void) {
 	buffer_head = 0;
 	buffer_tail = 0;
 	shift_down = false;
 	caps_lock = false;
-	debug_requested = false;
-	register_interrupt_handler(33, keyboard_interrupt);
-	interrupts_irq_unmask(1);
+	debugger_requested = false;
+
+	if (!irq_register_handler(IRQ_LINE_KEYBOARD, ps2_keyboard_interrupt))
+		return false;
+
+	irq_enable(IRQ_LINE_KEYBOARD);
+	return true;
 }
 
-bool keyboard_getchar_nonblocking(char* out) {
+static bool ps2_keyboard_read_char_nonblocking(char* out) {
 	if (buffer_tail == buffer_head)
 		return false;
 
@@ -104,10 +108,31 @@ bool keyboard_getchar_nonblocking(char* out) {
 	return true;
 }
 
-bool keyboard_debug_requested(void) {
-	return debug_requested;
+static bool ps2_keyboard_debug_requested(void) {
+	return debugger_requested;
 }
 
-void keyboard_clear_debug_request(void) {
-	debug_requested = false;
+static void ps2_keyboard_clear_debug_request(void) {
+	debugger_requested = false;
 }
+
+const input_driver_t i386_ps2_keyboard_driver = {
+	.name = "PS/2 keyboard",
+	.init = ps2_keyboard_init,
+	.read_char_nonblocking = ps2_keyboard_read_char_nonblocking,
+	.debug_requested = ps2_keyboard_debug_requested,
+	.clear_debug_request = ps2_keyboard_clear_debug_request,
+};
+
+static bool ps2_keyboard_activate(void) {
+	input_register_driver(&i386_ps2_keyboard_driver);
+	return true;
+}
+
+const module_descriptor_t i386_ps2_keyboard_module = {
+	.name = "PS/2 keyboard",
+	.kind = MODULE_KIND_INPUT,
+	.priority = 100u,
+	.probe = NULL,
+	.activate = ps2_keyboard_activate,
+};

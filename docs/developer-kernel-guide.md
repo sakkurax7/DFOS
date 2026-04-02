@@ -11,14 +11,24 @@ DFOS currently runs as a single-address-space 32-bit x86 kernel:
 - Booted by a Multiboot-compatible loader
 - Mapped into the higher half at `0xC0000000`
 - Running only kernel threads
-- Using VGA text mode for output
-- Using PIC, PIT, and PS/2-era PC hardware assumptions
+- Using small generic interfaces for console, input, timer, IRQ, and CPU services
+- Backed today by VGA text mode, PIC, PIT, and PS/2-era PC hardware on the i386 platform
 
 There is no user and kernel separation yet. "Applications" currently means:
 
 - New kernel threads created inside the kernel
 - Tools and content shipped in the initrd
 - Future userland code that will need an ABI once privilege separation exists
+
+## Source Layout
+
+The kernel is organized around a small hardware abstraction boundary:
+
+- [`../kernel/include/kernel/`](../kernel/include/kernel/) contains shared headers and the public subsystem interfaces
+- [`../kernel/kernel/`](../kernel/kernel/) contains generic kernel code and the hardware-neutral service facades
+- [`../kernel/arch/i386/`](../kernel/arch/i386/) contains the current architecture bootstrap code and concrete hardware drivers
+
+When adding new code, default to `kernel/kernel/` unless the code depends on architecture registers, port I/O, interrupt-controller details, or fixed device memory mappings.
 
 ## Boot Flow
 
@@ -47,28 +57,84 @@ See [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c).
 
 Current initialization sequence:
 
-1. Terminal
-2. Stack protector seed
-3. Multiboot validation
-4. GDT
-5. IDT
-6. Paging capability setup
-7. Physical memory manager
-8. Early heap
-9. Keyboard
-10. VFS and initrd indexing
-11. PIT
+1. Platform module registration and driver selection
+2. Console
+3. Stack protector seed
+4. Multiboot validation
+5. GDT
+6. IDT and IRQ controller
+7. Paging capability setup
+8. Physical memory manager
+9. Early heap
+10. Input
+11. VFS and initrd indexing
 12. Scheduler
-13. Bootstrap current-task registration
-14. Debugger task
-15. Demo worker tasks
-16. Global interrupt enable
+13. Timer
+14. Bootstrap current-task registration
+15. Debugger task
+16. Demo worker tasks
+17. Global interrupt enable
 
 That order matters. In particular:
 
 - `pmm_init` depends on bootstrap paging helpers already being usable
 - `heap_init` depends on the PMM reserving the bitmap and kernel image
-- `kdebug_init` depends on both the scheduler and keyboard
+- `input_initialize` depends on the active platform modules already being registered and selected
+- `timer_initialize` depends on the IRQ controller being live
+- `kdebug_init` depends on both the scheduler and input driver
+
+## Hardware Abstraction Model
+
+The kernel-facing hardware APIs live in:
+
+- [`../kernel/include/kernel/console.h`](../kernel/include/kernel/console.h)
+- [`../kernel/include/kernel/input.h`](../kernel/include/kernel/input.h)
+- [`../kernel/include/kernel/irq.h`](../kernel/include/kernel/irq.h)
+- [`../kernel/include/kernel/timer.h`](../kernel/include/kernel/timer.h)
+- [`../kernel/include/kernel/cpu.h`](../kernel/include/kernel/cpu.h)
+- [`../kernel/include/kernel/module.h`](../kernel/include/kernel/module.h)
+
+The matching generic dispatch layers live in:
+
+- [`../kernel/kernel/console.c`](../kernel/kernel/console.c)
+- [`../kernel/kernel/input.c`](../kernel/kernel/input.c)
+- [`../kernel/kernel/irq.c`](../kernel/kernel/irq.c)
+- [`../kernel/kernel/timer.c`](../kernel/kernel/timer.c)
+- [`../kernel/kernel/module.c`](../kernel/kernel/module.c)
+
+The current i386 platform registers module descriptors in [`../kernel/arch/i386/platform.c`](../kernel/arch/i386/platform.c) and then activates the appropriate implementations.
+
+Current bindings:
+
+- Console: [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c) and [`../kernel/arch/i386/serial_console.c`](../kernel/arch/i386/serial_console.c)
+- Input: [`../kernel/arch/i386/ps2_keyboard.c`](../kernel/arch/i386/ps2_keyboard.c)
+- IRQ controller: [`../kernel/arch/i386/pic.c`](../kernel/arch/i386/pic.c)
+- Timer: [`../kernel/arch/i386/pit_timer.c`](../kernel/arch/i386/pit_timer.c)
+- CPU helpers: [`../kernel/arch/i386/cpu.c`](../kernel/arch/i386/cpu.c)
+
+Rule of thumb:
+
+- If code can be written in terms of `console_*`, `input_*`, `timer_*`, `irq_*`, or `cpu_*`, it belongs in generic kernel code.
+- If code needs `x86_outb`, `x86_inb`, descriptor tables, raw IRQ controller knowledge, or device-specific MMIO addresses, it belongs under the architecture tree.
+
+## Module Selection Pattern
+
+See [`../kernel/include/kernel/module.h`](../kernel/include/kernel/module.h) and [`../kernel/kernel/module.c`](../kernel/kernel/module.c).
+
+Each hardware module declares:
+
+- A `module_kind_t`
+- A priority
+- An optional `probe` callback
+- An `activate` callback that registers the concrete driver with the generic service layer
+
+Use the registry like this:
+
+- For shared output paths such as consoles, register all viable modules and call `module_activate_all`
+- For competing implementations such as PIC vs APIC or PIT vs HPET, register all candidates and call `module_activate_best`
+- If a higher-priority module fails activation, the registry falls back to the next candidate automatically
+
+That gives you one reusable boot-time selection pattern instead of embedding hardware choice logic in every subsystem.
 
 ## Memory Subsystems
 
@@ -124,7 +190,7 @@ See [`../kernel/arch/i386/interrupts.c`](../kernel/arch/i386/interrupts.c) and [
 Current vector layout:
 
 - `0-31`: CPU exceptions
-- `32-47`: PIC IRQ remap window
+- `32-47`: current PIC IRQ remap window
 - `48`: software yield interrupt
 
 How dispatch works:
@@ -137,6 +203,8 @@ How dispatch works:
 
 The scheduler relies on step 4 to resume different tasks.
 
+IRQ-aware drivers should use the generic IRQ layer in [`../kernel/kernel/irq.c`](../kernel/kernel/irq.c) rather than hard-coding vector numbers in generic code. Today there are logical lines for the system timer and keyboard, and the active controller maps those to hardware vectors.
+
 ## Scheduler And Threads
 
 See [`../kernel/kernel/scheduler.c`](../kernel/kernel/scheduler.c).
@@ -148,7 +216,7 @@ Current thread model:
 - Round-robin scheduling
 - Tick-based sleeping
 - Cooperative yield via `int $48`
-- Preemptive time slicing through PIT IRQ0
+- Preemptive time slicing through the active timer driver
 
 When creating new kernel services:
 
@@ -162,18 +230,40 @@ Current limits:
 - All tasks share one address space
 - Zombie tasks are not reaped yet
 
-## Input, Debug, And Files
+## Platform Services, Debug, And Files
 
-### Keyboard
+### Console
 
-See [`../kernel/arch/i386/keyboard.c`](../kernel/arch/i386/keyboard.c).
+See [`../kernel/arch/i386/vga_console.c`](../kernel/arch/i386/vga_console.c), [`../kernel/arch/i386/serial_console.c`](../kernel/arch/i386/serial_console.c), and [`../kernel/kernel/console.c`](../kernel/kernel/console.c).
 
-The keyboard driver currently:
+The core kernel now writes through the generic console layer. The current backends:
+
+- Use VGA text mode memory for on-screen logs
+- Mirror the same output to COM1 for serial bring-up and debugging
+- Are selected at boot by `platform_register_drivers`
+
+### Input
+
+See [`../kernel/arch/i386/ps2_keyboard.c`](../kernel/arch/i386/ps2_keyboard.c) and [`../kernel/kernel/input.c`](../kernel/kernel/input.c).
+
+The current input driver:
 
 - Assumes a PS/2 keyboard
 - Decodes set-1 scancodes
 - Buffers translated characters in a small ring buffer
 - Reserves `F1` for debugger entry
+
+Other kernel code should consume characters and debug requests through `input_read_char_nonblocking`, `input_debug_requested`, and `input_clear_debug_request`.
+
+### Timer And IRQ Controller
+
+See [`../kernel/arch/i386/pit_timer.c`](../kernel/arch/i386/pit_timer.c), [`../kernel/arch/i386/pic.c`](../kernel/arch/i386/pic.c), [`../kernel/kernel/timer.c`](../kernel/kernel/timer.c), and [`../kernel/kernel/irq.c`](../kernel/kernel/irq.c).
+
+The current timer and interrupt-controller split works like this:
+
+- The IRQ controller owns vector mapping, masking, and acknowledgement
+- The timer driver owns hardware programming for the tick source
+- Timer drivers register their tick handler against a logical IRQ line instead of assuming a fixed vector in generic code
 
 ### Kernel Debugger
 
@@ -196,6 +286,86 @@ Implications:
 - The initrd is read-only
 - File contents must stay pinned in RAM
 - There is no directory tree object model yet, only indexed file records with path strings
+
+## Writing New Hardware Modules
+
+When you add support for different hardware, keep the generic kernel surface stable and swap only the platform implementation.
+
+Recommended workflow:
+
+1. Pick the smallest existing interface that fits the new device.
+2. Implement the concrete driver under [`../kernel/arch/i386/`](../kernel/arch/i386/) or a new architecture directory if the work is not i386-specific.
+3. Expose a `const` driver object matching the relevant interface type.
+4. Expose a `const module_descriptor_t` that probes and activates that driver.
+5. Register that module from [`../kernel/arch/i386/platform.c`](../kernel/arch/i386/platform.c) or the new platform's equivalent.
+6. Add the new source file to the architecture build list in [`../kernel/arch/i386/make.config`](../kernel/arch/i386/make.config).
+7. Validate the boot banners in [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c), which print the active driver names and module counts for quick bring-up checks.
+
+Rules to follow:
+
+- Keep `x86_*`, raw port I/O, MMIO addresses, and device register definitions inside architecture-specific files.
+- Keep policy and subsystem logic in generic kernel code whenever possible.
+- Register IRQ handlers through `irq_register_handler` and enable lines through `irq_enable`.
+- Keep boot-time hardware choice inside the module registry instead of scattering `if (has_hpet)` or `if (has_apic)` checks across generic code.
+- Return `false` from driver `init` callbacks when the hardware cannot be set up cleanly.
+- Do not let generic code depend on a specific vector number, I/O port, or device memory address.
+
+Minimal timer-driver skeleton:
+
+```c
+#include <kernel/module.h>
+#include <kernel/irq.h>
+#include <kernel/timer.h>
+
+static uint32_t my_timer_hz;
+
+static bool my_timer_init(uint32_t frequency_hz, interrupt_handler_t tick_handler) {
+	if (frequency_hz == 0 || tick_handler == NULL)
+		return false;
+
+	if (!irq_register_handler(IRQ_LINE_TIMER, tick_handler))
+		return false;
+
+	/* Program the hardware timer here. */
+	irq_enable(IRQ_LINE_TIMER);
+	my_timer_hz = frequency_hz;
+	return true;
+}
+
+static uint32_t my_timer_frequency_hz(void) {
+	return my_timer_hz;
+}
+
+const timer_driver_t my_timer_driver = {
+	.name = "my timer",
+	.init = my_timer_init,
+	.frequency_hz = my_timer_frequency_hz,
+};
+
+static bool my_timer_activate(void) {
+	timer_register_driver(&my_timer_driver);
+	return true;
+}
+
+const module_descriptor_t my_timer_module = {
+	.name = "my timer",
+	.kind = MODULE_KIND_TIMER,
+	.priority = 100u,
+	.probe = NULL,
+	.activate = my_timer_activate,
+};
+```
+
+For a new input or console backend, the same pattern applies: implement the interface in an architecture-specific file, wrap it in a module descriptor, and let the rest of the kernel continue calling the generic service layer.
+
+## Adding A New Platform
+
+For a different hardware target, aim for a thin platform assembly layer plus reusable generic subsystems:
+
+- Add a new `kernel/arch/<arch>/` tree with its own bootstrap, linker settings, and `make.config`
+- Provide a platform registration function that registers that platform's console, input, IRQ controller, timer, and CPU modules
+- Reuse `kernel/kernel/` code unless the subsystem truly depends on architecture behavior
+- Extend the generic interfaces only when two platforms genuinely need a new shared capability
 
 ## Coding Conventions For This Repo
 

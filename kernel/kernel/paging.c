@@ -3,9 +3,9 @@
 #include <stdint.h>
 
 #include <kernel/boot.h>
+#include <kernel/cpu.h>
 #include <kernel/paging.h>
 #include <kernel/pmm.h>
-#include <kernel/x86.h>
 
 extern uint32_t boot_page_directory[1024];
 extern uint32_t boot_page_table1[1024];
@@ -23,7 +23,7 @@ static uint64_t make_pae_entry(uint32_t physical, uint64_t flags) {
 
 void paging_init(uint32_t multiboot_info_addr) {
 	(void) multiboot_info_addr;
-	pae_supported = x86_cpu_has_pae();
+	pae_supported = cpu_has_pae();
 	pae_ready = false;
 
 	if (!pae_supported)

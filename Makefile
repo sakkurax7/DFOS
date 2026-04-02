@@ -29,8 +29,14 @@ check:
 		libc/string/strlen.c libc/string/strcmp.c libc/string/strncmp.c
 	cc -target i386-unknown-elf -ffreestanding -fstack-protector-strong -fsyntax-only \
 		-Ikernel/include -Ilibc/include \
-		kernel/kernel/kernel.c kernel/kernel/paging.c kernel/kernel/panic.c \
-		kernel/kernel/pmm.c kernel/kernel/heap.c kernel/kernel/scheduler.c \
-		kernel/kernel/stack_protector.c kernel/kernel/vfs.c kernel/kernel/kdebug.c \
-		kernel/arch/i386/gdt.c kernel/arch/i386/interrupts.c kernel/arch/i386/pit.c \
-		kernel/arch/i386/tty.c kernel/arch/i386/keyboard.c
+		kernel/kernel/console.c kernel/kernel/heap.c kernel/kernel/input.c \
+		kernel/kernel/irq.c kernel/kernel/kdebug.c kernel/kernel/kernel.c \
+		kernel/kernel/module.c \
+		kernel/kernel/paging.c kernel/kernel/panic.c kernel/kernel/pmm.c \
+		kernel/kernel/scheduler.c kernel/kernel/stack_protector.c \
+		kernel/kernel/timer.c kernel/kernel/vfs.c \
+		kernel/arch/i386/cpu.c kernel/arch/i386/gdt.c kernel/arch/i386/interrupts.c \
+		kernel/arch/i386/pic.c kernel/arch/i386/pit_timer.c \
+		kernel/arch/i386/platform.c kernel/arch/i386/ps2_keyboard.c \
+		kernel/arch/i386/serial_console.c \
+		kernel/arch/i386/vga_console.c

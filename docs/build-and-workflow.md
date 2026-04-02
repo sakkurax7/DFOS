@@ -31,7 +31,9 @@ What each target does:
 The build-related files are organized like this:
 
 - [`../scripts/`](../scripts/) contains the shell entry points for build, ISO, GRUB, and QEMU tasks
-- [`../kernel/`](../kernel/) contains the kernel and architecture-specific code
+- [`../kernel/include/`](../kernel/include/) contains shared kernel headers and hardware abstraction interfaces
+- [`../kernel/kernel/`](../kernel/kernel/) contains architecture-neutral kernel code plus the generic console, input, timer, and IRQ service layers
+- [`../kernel/arch/i386/`](../kernel/arch/i386/) contains the current i386 bootstrap code and PC hardware drivers
 - [`../libc/`](../libc/) contains the freestanding support library
 - [`../initrd/`](../initrd/) contains the files packed into `initrd.tar`
 - [`../sysroot/`](../sysroot/) is generated during builds and holds the staged boot artifacts
