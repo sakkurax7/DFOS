@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 
 #include <kernel/gdt.h>
 
@@ -18,8 +19,39 @@ typedef struct gdt_descriptor {
 
 extern void gdt_flush(const gdt_descriptor_t* descriptor);
 
-static gdt_entry_t gdt[5];
+typedef struct tss_entry {
+	uint32_t prev_tss;
+	uint32_t esp0;
+	uint32_t ss0;
+	uint32_t esp1;
+	uint32_t ss1;
+	uint32_t esp2;
+	uint32_t ss2;
+	uint32_t cr3;
+	uint32_t eip;
+	uint32_t eflags;
+	uint32_t eax;
+	uint32_t ecx;
+	uint32_t edx;
+	uint32_t ebx;
+	uint32_t esp;
+	uint32_t ebp;
+	uint32_t esi;
+	uint32_t edi;
+	uint32_t es;
+	uint32_t cs;
+	uint32_t ss;
+	uint32_t ds;
+	uint32_t fs;
+	uint32_t gs;
+	uint32_t ldt_selector;
+	uint16_t trap;
+	uint16_t iomap_base;
+} __attribute__((packed)) tss_entry_t;
+
+static gdt_entry_t gdt[6];
 static gdt_descriptor_t gdt_descriptor;
+static tss_entry_t tss;
 
 static void gdt_set_entry(int index, uint32_t base, uint32_t limit, uint8_t access,
 		uint8_t granularity) {
@@ -31,6 +63,10 @@ static void gdt_set_entry(int index, uint32_t base, uint32_t limit, uint8_t acce
 	gdt[index].access = access;
 }
 
+void gdt_set_kernel_stack(uint32_t stack_top) {
+	tss.esp0 = stack_top;
+}
+
 void gdt_init(void) {
 	gdt_descriptor.size = sizeof(gdt) - 1;
 	gdt_descriptor.offset = (uint32_t) &gdt;
@@ -40,6 +76,13 @@ void gdt_init(void) {
 	gdt_set_entry(2, 0, 0xFFFFF, 0x92, 0xCF);
 	gdt_set_entry(3, 0, 0xFFFFF, 0xFA, 0xCF);
 	gdt_set_entry(4, 0, 0xFFFFF, 0xF2, 0xCF);
+	memset(&tss, 0, sizeof(tss));
+	tss.ss0 = GDT_SELECTOR_KERNEL_DATA;
+	tss.iomap_base = sizeof(tss);
+	gdt_set_entry(5, (uint32_t) &tss, sizeof(tss) - 1, 0x89, 0x00);
 
 	gdt_flush(&gdt_descriptor);
+
+	uint16_t tss_selector = GDT_SELECTOR_TSS;
+	asm volatile("ltr %0" : : "rm"(tss_selector));
 }

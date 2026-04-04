@@ -66,7 +66,7 @@ void kernel_main(uint32_t multiboot_magic, uint32_t multiboot_info_addr) {
 	printf("heap window: %p - %p\n", heap_start(), heap_end());
 	printf("paging mode: %s (PAE supported: %s)\n",
 		paging_mode_name(), paging_pae_supported() ? "yes" : "no");
-	printf("PAE tables: %s\n", paging_pae_ready() ? "prepared" : "unavailable");
+	printf("PAE runtime: %s\n", paging_pae_ready() ? "active" : "inactive");
 	printf("initrd files: %u\n", vfs_file_count());
 	printf("console: %s (%u backend%s)\n", console_driver_name(),
 		(unsigned) console_driver_count(), console_driver_count() == 1 ? "" : "s");

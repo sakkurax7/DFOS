@@ -4,6 +4,7 @@
 .set FLAGS,    ALIGN | MEMINFO  
 .set MAGIC,    0x1BADB002      
 .set CHECKSUM, -(MAGIC + FLAGS) 
+.set EARLY_PT_POOL_COUNT, 64
 
 # Declare a header as in the Multiboot Standard.
 .section .multiboot
@@ -37,7 +38,12 @@ boot_page_directory:
 .global boot_page_table1
 boot_page_table1:
 	.skip 4096
-# We may need more if kernel > 3MiB
+.balign 4096
+.global boot_page_table_pool
+boot_page_table_pool:
+	.skip 4096 * EARLY_PT_POOL_COUNT
+.global boot_page_table_pool_end
+boot_page_table_pool_end:
 
 # Kernel entry point
 .section .text
@@ -58,22 +64,18 @@ _start:
 	# to have cleared BSS exactly the way our early paging code expects.
 	movl $(boot_page_directory - 0xC0000000), %edi
 	xorl %eax, %eax
-	movl $1024, %ecx
-	rep stosl
-
-	movl $(boot_page_table1 - 0xC0000000), %edi
-	movl $1024, %ecx
+	movl $((boot_page_table_pool_end - boot_page_directory) / 4), %ecx
 	rep stosl
 
 	# Physical address of boot_page_table1
 	movl $(boot_page_table1 - 0xC0000000), %edi
 	# First address to map is 0
 	movl $0, %esi
-	# Map 1023 low-memory pages and leave the last entry for VGA text memory.
+	# Map the full 4 MiB low-memory bootstrap window.
 	# The higher-half kernel touches Multiboot structures and early modules via
 	# physical-to-virtual translation before a fuller VM layout exists, so the
 	# whole bootstrap window must stay present for now.
-	movl $1023, %ecx
+	movl $1024, %ecx
 
 1:
 	# Map physical addresses as present, writable.
@@ -88,16 +90,16 @@ _start:
 	# Loop to the next entry if we haven't finished
 	loop 1b
 
-	# Map VGA memory to 0xC03FF000 as present, writable
-	movl $(0x000B8000 | 0x003), boot_page_table1 - 0xC0000000 + 1023 * 4
-
 	# Map page table to 0x0... and 0xC0...
 	# Entry 0 keeps the early identity map alive long enough to flip CR0 safely.
 	# Entry 768 mirrors the same table into the higher-half kernel base at 0xC0000000.
 	movl $(boot_page_table1 - 0xC0000000 + 0x003), boot_page_directory - 0xC0000000 + 0
 	movl $(boot_page_table1 - 0xC0000000 + 0x003), boot_page_directory - 0xC0000000 + 768 * 4
+	# Entry 1023 recursively maps the page directory so C code can inspect and grow
+	# page tables without temporary mappings.
+	movl $(boot_page_directory - 0xC0000000 + 0x003), boot_page_directory - 0xC0000000 + 1023 * 4
 
-	# Set cr3 to address of boot_page_direcotyr
+	# Set cr3 to address of boot_page_directory
 	movl $(boot_page_directory - 0xC0000000), %ecx
 	movl %ecx, %cr3
 

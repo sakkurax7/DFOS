@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <kernel/gdt.h>
 #include <kernel/interrupts.h>
 #include <kernel/irq.h>
 #include <kernel/panic.h>
@@ -41,7 +42,7 @@ static const char* const exception_names[] = {
 
 static void idt_set_gate(uint8_t vector, uint32_t handler, uint8_t flags) {
 	idt[vector].offset_low = (uint16_t) (handler & 0xFFFF);
-	idt[vector].selector = 0x08;
+	idt[vector].selector = GDT_SELECTOR_KERNEL_CODE;
 	idt[vector].zero = 0;
 	idt[vector].flags = flags;
 	idt[vector].offset_high = (uint16_t) ((handler >> 16) & 0xFFFF);
@@ -53,8 +54,14 @@ static interrupt_frame_t* default_exception_handler(interrupt_frame_t* frame) {
 		name = exception_names[frame->vector];
 
 	if (frame->vector == 14) {
-		panic("page fault at eip=%p addr=%p err=0x%x",
-			(void*) frame->eip, (void*) x86_read_cr2(), frame->error_code);
+		const uint32_t err = frame->error_code;
+		panic("page fault at eip=%p addr=%p err=0x%x (%s, %s, %s, %s, %s)",
+			(void*) frame->eip, (void*) x86_read_cr2(), err,
+			(err & 0x1u) != 0 ? "protection violation" : "non-present page",
+			(err & 0x2u) != 0 ? "write" : "read",
+			(err & 0x4u) != 0 ? "user" : "supervisor",
+			(err & 0x8u) != 0 ? "reserved-bit set" : "reserved bits clear",
+			(err & 0x10u) != 0 ? "instruction fetch" : "data access");
 	}
 
 	panic("cpu exception %u (%s) at eip=%p err=0x%x",

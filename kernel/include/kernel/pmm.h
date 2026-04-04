@@ -11,6 +11,7 @@ bool pmm_alloc_frames(uint32_t frame_count, uint32_t* physical_addr_out);
 void pmm_free_frames(uint32_t physical_addr, uint32_t frame_count);
 void pmm_reserve_range(uint32_t base, uint32_t length);
 void pmm_mark_available_range(uint32_t base, uint32_t length);
+bool pmm_is_initialized(void);
 uint32_t pmm_total_memory_kib(void);
 uint32_t pmm_free_memory_kib(void);
 uint32_t pmm_bitmap_end_phys(void);

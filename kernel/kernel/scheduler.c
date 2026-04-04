@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <kernel/gdt.h>
 #include <kernel/heap.h>
 #include <kernel/interrupts.h>
 #include <kernel/panic.h>
@@ -27,6 +28,7 @@ typedef struct task {
 	task_state_t state;
 	interrupt_frame_t* frame;
 	void* stack_base;
+	uint32_t kernel_stack_top;
 	uint32_t wakeup_tick;
 	kernel_task_entry_t entry;
 	void* arg;
@@ -86,10 +88,12 @@ static interrupt_frame_t* schedule_next(interrupt_frame_t* frame, bool force_swi
 		current_task_index = index;
 		candidate->state = TASK_RUNNING;
 		ticks_since_switch = 0;
+		gdt_set_kernel_stack(candidate->kernel_stack_top);
 		return candidate->frame;
 	}
 
 	current->state = TASK_RUNNING;
+	gdt_set_kernel_stack(current->kernel_stack_top);
 	return frame;
 }
 
@@ -117,10 +121,14 @@ void scheduler_bootstrap_current(const char* name) {
 	tasks[0].state = TASK_RUNNING;
 	tasks[0].frame = NULL;
 	tasks[0].stack_base = NULL;
+	uint32_t bootstrap_stack_top;
+	asm volatile("mov %%esp, %0" : "=r"(bootstrap_stack_top));
+	tasks[0].kernel_stack_top = bootstrap_stack_top;
 	tasks[0].wakeup_tick = 0;
 	tasks[0].entry = NULL;
 	tasks[0].arg = NULL;
 	current_task_index = 0;
+	gdt_set_kernel_stack(tasks[0].kernel_stack_top);
 }
 
 bool scheduler_create_kernel_task(const char* name, kernel_task_entry_t entry, void* arg) {
@@ -144,7 +152,7 @@ bool scheduler_create_kernel_task(const char* name, kernel_task_entry_t entry, v
 	frame->vector = SCHEDULER_YIELD_VECTOR;
 	frame->error_code = 0;
 	frame->eip = (uint32_t) task_trampoline;
-	frame->cs = 0x08;
+	frame->cs = GDT_SELECTOR_KERNEL_CODE;
 	frame->eflags = 0x202;
 
 	task->id = next_task_id++;
@@ -152,6 +160,7 @@ bool scheduler_create_kernel_task(const char* name, kernel_task_entry_t entry, v
 	task->state = TASK_RUNNABLE;
 	task->frame = frame;
 	task->stack_base = stack;
+	task->kernel_stack_top = (uint32_t) (stack + TASK_STACK_SIZE);
 	task->wakeup_tick = 0;
 	task->entry = entry;
 	task->arg = arg;

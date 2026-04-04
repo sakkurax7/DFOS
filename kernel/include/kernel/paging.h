@@ -6,6 +6,11 @@
 
 #define KERNEL_VMA            0xC0000000u
 #define BOOTSTRAP_WINDOW_SIZE 0x00400000u
+#define PAGE_SIZE             0x00001000u
+
+#define PAGING_FLAG_PRESENT   0x001u
+#define PAGING_FLAG_WRITABLE  0x002u
+#define PAGING_FLAG_USER      0x004u
 
 void paging_init(uint32_t multiboot_info_addr);
 bool paging_pae_supported(void);
