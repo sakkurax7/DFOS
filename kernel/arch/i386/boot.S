@@ -5,6 +5,7 @@
 .set MAGIC,    0x1BADB002      
 .set CHECKSUM, -(MAGIC + FLAGS) 
 .set EARLY_PT_POOL_COUNT, 64
+.set EARLY_BOOT_ZERO_DWORDS, EARLY_PT_POOL_COUNT * 1024 + 2048
 
 # Declare a header as in the Multiboot Standard.
 .section .multiboot
@@ -64,7 +65,7 @@ _start:
 	# to have cleared BSS exactly the way our early paging code expects.
 	movl $(boot_page_directory - 0xC0000000), %edi
 	xorl %eax, %eax
-	movl $((boot_page_table_pool_end - boot_page_directory) / 4), %ecx
+	movl $EARLY_BOOT_ZERO_DWORDS, %ecx
 	rep stosl
 
 	# Physical address of boot_page_table1
