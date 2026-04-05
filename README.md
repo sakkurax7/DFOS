@@ -26,6 +26,27 @@ The intended toolchain is an `i686-elf` cross compiler plus a few host tools:
 
 For legacy BIOS ISO generation on `arm64` Ubuntu hosts, the build can fetch GRUB `i386-pc` platform files into `compile/grub/i386-pc` automatically.
 
+### macOS Helper
+
+For macOS hosts, use the toolchain helper to install everything this repository needs in a project-local location:
+
+```sh
+make toolchain-macos
+```
+
+It will:
+
+- install missing Homebrew dependencies
+- build `i686-elf` binutils and GCC into `compile/toolchain`
+- build local GRUB `i386-pc` tools/modules into `compile/toolchain/grub-install`
+- write `compile/toolchain/env.sh` for optional manual shell setup
+
+To remove everything the helper installed:
+
+```sh
+make toolchain-macos-uninstall
+```
+
 ## Common Commands
 
 ```sh
@@ -47,6 +68,7 @@ sh ./scripts/build.sh
 sh ./scripts/iso.sh
 sh ./scripts/qemu.sh
 sh ./scripts/qemu-debug.sh
+sh ./scripts/macos-toolchain.sh install
 ```
 
 ## Notes

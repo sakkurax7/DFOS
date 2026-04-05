@@ -6,6 +6,28 @@ if [ -z "${SCRIPT_ROOT:-}" ] || [ -z "${REPO_ROOT:-}" ]; then
   return 1 2>/dev/null || exit 1
 fi
 
+prepend_path_if_dir() {
+  if [ -z "$1" ] || [ ! -d "$1" ]; then
+    return
+  fi
+
+  case ":$PATH:" in
+    *":$1:"*) ;;
+    *) PATH="$1:$PATH" ;;
+  esac
+}
+
+LOCAL_TOOLCHAIN_ROOT=${DFOS_TOOLCHAIN_ROOT:-"$REPO_ROOT/compile/toolchain"}
+LOCAL_CROSS_BIN_DIR=${LOCAL_CROSS_BIN_DIR:-"$LOCAL_TOOLCHAIN_ROOT/bin"}
+LOCAL_GRUB_INSTALL_ROOT=${LOCAL_GRUB_INSTALL_ROOT:-"$LOCAL_TOOLCHAIN_ROOT/grub-install"}
+LOCAL_GRUB_BIN_DIR=${LOCAL_GRUB_BIN_DIR:-"$LOCAL_GRUB_INSTALL_ROOT/usr/bin"}
+LEGACY_LOCAL_GRUB_BIN_DIR=${LEGACY_LOCAL_GRUB_BIN_DIR:-"$REPO_ROOT/compile/grub/install/usr/bin"}
+
+prepend_path_if_dir "$LOCAL_CROSS_BIN_DIR"
+prepend_path_if_dir "$LOCAL_GRUB_BIN_DIR"
+prepend_path_if_dir "$LEGACY_LOCAL_GRUB_BIN_DIR"
+export PATH
+
 export MAKE=${MAKE:-make}
 export HOST=${HOST:-$(sh "$SCRIPT_ROOT/default-host.sh")}
 
