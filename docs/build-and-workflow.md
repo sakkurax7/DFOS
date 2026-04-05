@@ -13,6 +13,8 @@ make debug
 make boot-layout
 make clean
 make check
+make toolchain-macos
+make toolchain-macos-uninstall
 ```
 
 What each target does:
@@ -25,6 +27,8 @@ What each target does:
 - `boot-layout`: checks that the bootstrap paging structures are aligned in the built kernel image
 - `clean`: removes generated build output
 - `check`: runs a local Clang syntax pass that does not require the cross toolchain
+- `toolchain-macos`: installs a macOS-local toolchain under `compile/toolchain`
+- `toolchain-macos-uninstall`: removes the macOS-local toolchain and tracked dependencies
 
 ## Repository Layout
 
@@ -47,6 +51,14 @@ export PATH="/path/to/cross/bin:$PATH"
 i686-elf-gcc --version
 ```
 
+On macOS, you can bootstrap the toolchain with:
+
+```sh
+sh ./scripts/macos-toolchain.sh install
+```
+
+This helper keeps the cross compiler and local GRUB build under `compile/toolchain`, and `scripts/config.sh` will automatically prepend those local binaries to `PATH` when present.
+
 The helper scripts are:
 
 - [`../scripts/config.sh`](../scripts/config.sh) for shared environment variables
@@ -59,6 +71,7 @@ The helper scripts are:
 - [`../scripts/qemu.sh`](../scripts/qemu.sh) for the normal QEMU launcher
 - [`../scripts/qemu-debug.sh`](../scripts/qemu-debug.sh) for the debug launcher that keeps the VM from rebooting
 - [`../scripts/check-boot-layout.sh`](../scripts/check-boot-layout.sh) for verifying early paging symbol alignment
+- [`../scripts/macos-toolchain.sh`](../scripts/macos-toolchain.sh) for macOS-local toolchain install/uninstall under `compile/toolchain`
 
 On `arm64` Ubuntu hosts, the ISO flow looks for GRUB BIOS platform files in `/usr/lib/grub/i386-pc` first. If they are missing, it can download `grub-pc-bin` into `compile/grub/i386-pc` using `apt-cache`, `wget`, and `dpkg-deb`. If you prefer a source build, `scripts/build-grub-i386-pc.sh` installs a local GRUB copy under `compile/grub/install`.
 
