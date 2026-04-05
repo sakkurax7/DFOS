@@ -16,8 +16,7 @@ extern uint8_t _text_end;
 extern uint8_t _rodata_start;
 extern uint8_t _rodata_end;
 
-extern void i386_pae_trampoline(uint32_t pdpt_physical, uint32_t low_stack,
-	uint32_t high_stack);
+extern void i386_pae_trampoline(uint32_t pdpt_physical, uint32_t low_stack);
 
 static bool pae_supported;
 static bool pae_ready;
@@ -386,10 +385,10 @@ static void pae_prepare_bootstrap_tables(void) {
 
 	pae_pdpt[PAE_PDPT_ENTRY_LOW] =
 		pae_make_entry(kernel_pointer_to_physical(&pae_identity_page_directory[0]),
-			PAE_ENTRY_PRESENT | PAE_ENTRY_WRITABLE);
+			PAE_ENTRY_PRESENT);
 	pae_pdpt[PAE_PDPT_ENTRY_KERNEL] =
 		pae_make_entry(kernel_pointer_to_physical(&pae_kernel_page_directory[0]),
-			PAE_ENTRY_PRESENT | PAE_ENTRY_WRITABLE);
+			PAE_ENTRY_PRESENT);
 }
 
 static void pae_activate_runtime(void) {
@@ -399,24 +398,24 @@ static void pae_activate_runtime(void) {
 		panic("PAE trampoline is outside higher-half mapping");
 	const uint32_t trampoline_physical = trampoline_virtual - KERNEL_VMA;
 
-	uint32_t high_stack;
-	asm volatile("mov %%esp, %0" : "=r"(high_stack));
+	uint32_t stack_snapshot;
+	asm volatile("mov %%esp, %0" : "=r"(stack_snapshot));
 
-	if (high_stack < KERNEL_VMA)
+	if (stack_snapshot < KERNEL_VMA)
 		panic("unexpected stack outside higher-half during PAE switch");
 
-	const uint32_t low_stack = high_stack - KERNEL_VMA;
+	const uint32_t low_stack = stack_snapshot - KERNEL_VMA;
 	if (low_stack >= BOOTSTRAP_WINDOW_SIZE)
 		panic("PAE switch stack is outside identity-mapped bootstrap window");
 
 	if (trampoline_physical >= BOOTSTRAP_WINDOW_SIZE)
 		panic("PAE trampoline is outside identity-mapped bootstrap window");
 
-	typedef void (*pae_trampoline_fn_t)(uint32_t, uint32_t, uint32_t);
+	typedef void (*pae_trampoline_fn_t)(uint32_t, uint32_t);
 	pae_trampoline_fn_t trampoline = (pae_trampoline_fn_t) (uintptr_t) trampoline_physical;
 
 	x86_cli();
-	trampoline(pdpt_physical, low_stack, high_stack);
+	trampoline(pdpt_physical, low_stack);
 }
 
 static bool pae_translate_address(uint32_t virtual_addr, uint32_t* physical_out) {

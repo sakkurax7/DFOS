@@ -4,10 +4,11 @@ i386_pae_trampoline:
 	# cdecl arguments:
 	#   [esp + 4]  = pdpt physical address
 	#   [esp + 8]  = low identity-mapped stack pointer
-	#   [esp + 12] = restored high-half stack pointer
 	mov 4(%esp), %eax
 	mov 8(%esp), %ecx
-	mov 12(%esp), %edx
+	# Preserve the real call-entry stack (with return address + args) so `ret`
+	# unwinds correctly after paging mode changes.
+	mov %esp, %edx
 
 	# Switch to an identity-mapped stack before disabling paging.
 	mov %ecx, %esp
@@ -28,6 +29,6 @@ i386_pae_trampoline:
 	orl $0x80000000, %ecx
 	mov %ecx, %cr0
 
-	# Return on the original high-half stack.
+	# Return on the original call-entry stack.
 	mov %edx, %esp
 	ret
