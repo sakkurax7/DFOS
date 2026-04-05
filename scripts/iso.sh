@@ -8,9 +8,13 @@ cd "$REPO_ROOT"
 
 sh "$SCRIPT_DIR/build.sh"
 
-LOCAL_GRUB_INSTALL_ROOT=${LOCAL_GRUB_INSTALL_ROOT:-"$REPO_ROOT/compile/grub/install"}
+DEFAULT_LOCAL_TOOLCHAIN_ROOT=${DFOS_TOOLCHAIN_ROOT:-"$REPO_ROOT/compile/toolchain"}
+LOCAL_GRUB_INSTALL_ROOT=${LOCAL_GRUB_INSTALL_ROOT:-"$DEFAULT_LOCAL_TOOLCHAIN_ROOT/grub-install"}
 LOCAL_GRUB_BIN_DIR=${LOCAL_GRUB_BIN_DIR:-"$LOCAL_GRUB_INSTALL_ROOT/usr/bin"}
 LOCAL_GRUB_BUILD_I386_PC_DIR=${LOCAL_GRUB_BUILD_I386_PC_DIR:-"$LOCAL_GRUB_INSTALL_ROOT/usr/lib/grub/i386-pc"}
+LEGACY_LOCAL_GRUB_INSTALL_ROOT=${LEGACY_LOCAL_GRUB_INSTALL_ROOT:-"$REPO_ROOT/compile/grub/install"}
+LEGACY_LOCAL_GRUB_BIN_DIR=${LEGACY_LOCAL_GRUB_BIN_DIR:-"$LEGACY_LOCAL_GRUB_INSTALL_ROOT/usr/bin"}
+LEGACY_LOCAL_GRUB_BUILD_I386_PC_DIR=${LEGACY_LOCAL_GRUB_BUILD_I386_PC_DIR:-"$LEGACY_LOCAL_GRUB_INSTALL_ROOT/usr/lib/grub/i386-pc"}
 LOCAL_GRUB_I386_PC_DIR=${LOCAL_GRUB_I386_PC_DIR:-"$REPO_ROOT/compile/grub/i386-pc"}
 GRUB_I386_PC_DIR=${GRUB_I386_PC_DIR:-/usr/lib/grub/i386-pc}
 GRUB_PC_BIN_PACKAGE=${GRUB_PC_BIN_PACKAGE:-grub-pc-bin}
@@ -25,21 +29,29 @@ require_command() {
 }
 
 resolve_grub_tool() {
-  if [ -x "$1" ]; then
-    printf '%s\n' "$1"
-  elif command -v "$1" >/dev/null 2>&1; then
-    command -v "$1"
-  elif [ -x "$2" ]; then
-    printf '%s\n' "$2"
-  else
-    return 1
-  fi
+  for tool_candidate in "$@"; do
+    if [ -x "$tool_candidate" ]; then
+      printf '%s\n' "$tool_candidate"
+      return 0
+    fi
+
+    if command -v "$tool_candidate" >/dev/null 2>&1; then
+      command -v "$tool_candidate"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
-GRUB_MKIMAGE=$(resolve_grub_tool "$GRUB_MKIMAGE" "$LOCAL_GRUB_BIN_DIR/grub-mkimage") || {
+GRUB_MKIMAGE=$(resolve_grub_tool \
+  "$GRUB_MKIMAGE" \
+  "$LOCAL_GRUB_BIN_DIR/grub-mkimage" \
+  "$LEGACY_LOCAL_GRUB_BIN_DIR/grub-mkimage") || {
   cat >&2 << EOF
 error: GRUB's mkimage tool was not found.
-Install GRUB system-wide or run 'sh ./scripts/build-grub-i386-pc.sh' to build a local copy into $LOCAL_GRUB_INSTALL_ROOT.
+Install GRUB system-wide, run 'sh ./scripts/macos-toolchain.sh install' on macOS, or run
+'sh ./scripts/build-grub-i386-pc.sh' to build a local GRUB copy from source.
 EOF
   exit 1
 }
@@ -49,6 +61,8 @@ require_command xorriso
 if [ ! -d "$GRUB_I386_PC_DIR" ] || [ ! -f "$GRUB_I386_PC_DIR/cdboot.img" ]; then
   if [ -f "$LOCAL_GRUB_BUILD_I386_PC_DIR/cdboot.img" ]; then
     GRUB_I386_PC_DIR=$LOCAL_GRUB_BUILD_I386_PC_DIR
+  elif [ -f "$LEGACY_LOCAL_GRUB_BUILD_I386_PC_DIR/cdboot.img" ]; then
+    GRUB_I386_PC_DIR=$LEGACY_LOCAL_GRUB_BUILD_I386_PC_DIR
   else
     if [ ! -f "$LOCAL_GRUB_I386_PC_DIR/cdboot.img" ]; then
       sh "$SCRIPT_DIR/fetch-grub-i386-pc.sh" "$LOCAL_GRUB_I386_PC_DIR"
@@ -66,7 +80,10 @@ EOF
   exit 1
 fi
 
-GRUB_FILE=$(resolve_grub_tool "$GRUB_FILE" "$LOCAL_GRUB_BIN_DIR/grub-file" || true)
+GRUB_FILE=$(resolve_grub_tool \
+  "$GRUB_FILE" \
+  "$LOCAL_GRUB_BIN_DIR/grub-file" \
+  "$LEGACY_LOCAL_GRUB_BIN_DIR/grub-file" || true)
 if [ -n "$GRUB_FILE" ]; then
   "$GRUB_FILE" --is-x86-multiboot sysroot/boot/dfos.kernel
 fi

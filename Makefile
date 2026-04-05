@@ -1,4 +1,4 @@
-.PHONY: headers build iso run debug boot-layout clean check
+.PHONY: headers build iso run debug boot-layout clean check toolchain-macos toolchain-macos-uninstall
 
 headers:
 	sh scripts/headers.sh
@@ -40,3 +40,9 @@ check:
 		kernel/arch/i386/platform.c kernel/arch/i386/ps2_keyboard.c \
 		kernel/arch/i386/serial_console.c \
 		kernel/arch/i386/vga_console.c
+
+toolchain-macos:
+	sh scripts/macos-toolchain.sh install
+
+toolchain-macos-uninstall:
+	sh scripts/macos-toolchain.sh uninstall
