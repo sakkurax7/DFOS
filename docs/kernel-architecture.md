@@ -66,15 +66,16 @@ This is the intended path for future APIC-vs-PIC, HPET-vs-PIT, or storage-contro
 
 ## GDT
 
-[`../kernel/arch/i386/gdt.c`](../kernel/arch/i386/gdt.c) installs a flat segmentation model:
+[`../kernel/arch/i386/gdt.c`](../kernel/arch/i386/gdt.c) installs a flat segmentation model plus a hardware task-state segment:
 
 - Null descriptor
 - Kernel code segment
 - Kernel data segment
 - User code segment
 - User data segment
+- 32-bit available TSS descriptor
 
-[`../kernel/arch/i386/gdt_flush.S`](../kernel/arch/i386/gdt_flush.S) reloads segment registers and performs the far jump needed to activate the new code segment.
+[`../kernel/arch/i386/gdt_flush.S`](../kernel/arch/i386/gdt_flush.S) reloads segment registers and performs the far jump needed to activate the new code segment. `gdt_init` then loads the TSS with `ltr`, and the scheduler updates `esp0` on task switches so privilege transitions have a correct ring-0 stack target.
 
 ## Interrupts And IRQ Routing
 
@@ -109,16 +110,22 @@ Bootstrap paging is enabled in assembly using a higher-half mapping rooted at `0
 
 [`../kernel/kernel/paging.c`](../kernel/kernel/paging.c) currently provides:
 
-- Physical and virtual conversion helpers for the higher-half mapping
 - Detection of CPU PAE support through CPUID
-- Preparation of a matching PAE PDPT, page-directory, and page-table layout for the first 4 MiB bootstrap window
-- Page-level map and unmap helpers inside the bootstrap-mapped higher-half window
+- A safe runtime transition to PAE paging through an identity-mapped assembly trampoline that switches CR0/CR4/CR3 in the required order
+- PAE runtime tables with:
+  - A low bootstrap PDPT slot used only during the mode switch
+  - A higher-half kernel PDPT slot covering `0xC0000000` and above
+  - A direct-map aperture for the first 256 MiB of physical memory
+  - A dedicated dynamic mapping region (`0xF0000000`-`0xFFBFFFFF`) for on-demand page mapping
+- Legacy 32-bit recursive paging fallback when PAE is not available
+- Page-level map/unmap helpers across the kernel dynamic mapping range
+- `.text` and `.rodata` write protection enforcement by clearing PTE RW bits after paging initialization
+- Post-switch identity-map teardown of the lower half so low virtual addresses fault by default
 
 Important limitations:
 
-- The live MMU remains in legacy 32-bit paging mode after boot.
-- The bootstrap mapping still covers only the first 4 MiB mirrored at `0xC0000000`.
-- The kernel prepares PAE tables, but does not yet perform the trampoline-based mode switch required to activate them safely.
+- `paging_phys_to_virt` uses a bounded direct-map aperture (currently first 256 MiB of physical space).
+- The kernel still uses one shared address space; per-process page directories for userland are not wired yet.
 
 ## Physical Memory Manager
 
@@ -131,7 +138,7 @@ Behavior:
 - Re-reserves low memory, the kernel image, Multiboot structures, loaded modules, and the bitmap itself
 - Supports single-frame and contiguous-frame allocation and free operations
 
-This is the foundation for future page-table growth and general physical memory ownership tracking.
+This now backs live on-demand page-table growth and general physical memory ownership tracking.
 
 ## Kernel Heap
 

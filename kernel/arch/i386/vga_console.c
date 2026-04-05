@@ -5,12 +5,13 @@
 
 #include <kernel/console.h>
 #include <kernel/module.h>
+#include <kernel/paging.h>
 
 #include "vga.h"
 
 static const size_t VGA_WIDTH = 80;
 static const size_t VGA_HEIGHT = 25;
-static uint16_t* const VGA_MEMORY = (uint16_t*) 0xC03FF000;
+static uint16_t* const VGA_MEMORY = (uint16_t*) (KERNEL_VMA + 0x000B8000u);
 
 static size_t terminal_row;
 static size_t terminal_column;

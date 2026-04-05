@@ -8,7 +8,7 @@
 typedef signed char int8_t;
 typedef short int int16_t;
 typedef int int32_t;
-typedef long int int64_t;
+typedef __INT64_TYPE__ int64_t;
 #endif
 
 // unsigned
@@ -19,7 +19,7 @@ typedef unsigned short int uint16_t;
 typedef unsigned int uint32_t;
 # define __uint32_t_defined
 #endif
-typedef unsigned long int uint64_t;
+typedef __UINT64_TYPE__ uint64_t;
 typedef __INTPTR_TYPE__ intptr_t;
 typedef __UINTPTR_TYPE__ uintptr_t;
 #endif

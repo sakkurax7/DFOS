@@ -7,12 +7,16 @@ SECTIONS
 	_kernel_start = .;
 	.text ALIGN (4K) : AT (ADDR (.text) - 0xC0000000)
 	{
+		_text_start = .;
 		*(.multiboot)
 		*(.text)
+		_text_end = .;
 	}
 	.rodata ALIGN (4K) : AT (ADDR (.rodata) - 0xC0000000)
 	{
+		_rodata_start = .;
 		*(.rodata)
+		_rodata_end = .;
 	}
 	.data ALIGN (4K) : AT (ADDR (.data) - 0xC0000000)
 	{

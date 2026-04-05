@@ -9,13 +9,12 @@
 extern uint8_t _kernel_start;
 extern uint8_t _kernel_end;
 
-#define PAGE_SIZE 4096u
-
 static uint8_t* frame_bitmap;
 static uint32_t total_frames;
 static uint32_t free_frames;
 static uint32_t total_memory_kib;
 static uint32_t bitmap_end_phys;
+static bool initialized;
 
 static uint32_t align_up(uint32_t value, uint32_t alignment) {
 	return (value + alignment - 1) & ~(alignment - 1);
@@ -65,6 +64,7 @@ void pmm_reserve_range(uint32_t base, uint32_t length) {
 }
 
 void pmm_init(uint32_t multiboot_info_addr) {
+	initialized = false;
 	const multiboot_info_t* mbi =
 		(const multiboot_info_t*) paging_phys_to_virt(multiboot_info_addr);
 	uint32_t highest_physical = 0;
@@ -136,6 +136,8 @@ void pmm_init(uint32_t multiboot_info_addr) {
 				pmm_reserve_range(modules[i].string, 128);
 		}
 	}
+
+	initialized = true;
 }
 
 bool pmm_alloc_frame(uint32_t* physical_addr_out) {
@@ -191,6 +193,10 @@ uint32_t pmm_total_memory_kib(void) {
 
 uint32_t pmm_free_memory_kib(void) {
 	return free_frames * 4u;
+}
+
+bool pmm_is_initialized(void) {
+	return initialized;
 }
 
 uint32_t pmm_bitmap_end_phys(void) {

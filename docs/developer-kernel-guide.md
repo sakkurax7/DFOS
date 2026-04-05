@@ -47,8 +47,9 @@ The bootstrap code:
 
 Important constraints:
 
-- The bootstrap mapping covers only the first 4 MiB of physical memory mirrored at `0xC0000000`.
-- Early allocators and tables must fit inside that window unless paging is expanded.
+- The bootstrap mapping covers the first 4 MiB and exists long enough to perform the PAE transition trampoline.
+- On PAE-capable CPUs, `paging_init` installs the larger higher-half PAE map before PMM setup continues.
+- In legacy fallback mode, pre-PMM page-table growth uses a fixed bootstrap pool in `.bootstrap_paging`.
 - The page directory and first page table must stay 4 KiB aligned, which is why they live in dedicated linker sections.
 
 ## Initialization Order
@@ -160,15 +161,22 @@ See [`../kernel/kernel/paging.c`](../kernel/kernel/paging.c).
 
 Current paging capabilities:
 
-- Physical and virtual translation for the higher-half window
-- Readiness detection and table preparation for PAE
-- Page map and unmap inside the existing bootstrap page table
-- A monotonic page allocator for virtual addresses inside the early mapped window
+- Safe runtime transition to PAE using an identity-mapped trampoline (`CR0.PG` clear, `CR4.PAE` set, PAE `CR3` load, then `CR0.PG` re-enable)
+- PAE runtime layout:
+  - `0xC0000000`-`0xCFFFFFFF`: direct-map aperture for first 256 MiB physical
+  - `0xF0000000`-`0xFFBFFFFF`: on-demand kernel dynamic mappings
+  - Lower-half bootstrap identity map used only for transition, then removed
+- Legacy recursive paging fallback when PAE is unavailable
+- Physical-to-virtual translation through the direct-map aperture
+- Virtual-to-physical translation by page-table walk
+- Page map/unmap across the kernel dynamic range
+- Kernel section hardening: `.text` and `.rodata` pages are marked read-only
+- A monotonic page allocator in the dedicated high virtual dynamic range
 
 Current limits:
 
-- The kernel does not yet grow page tables on demand outside the bootstrap map.
-- `paging_alloc_pages` can exhaust the initial virtual window.
+- `paging_phys_to_virt` currently supports a bounded direct-map aperture (first 256 MiB physical).
+- Per-process user address spaces are not implemented yet; the kernel still runs in a shared address space model.
 
 ### Heap
 
@@ -213,6 +221,7 @@ Current thread model:
 
 - Fixed-size task table
 - One kernel stack per task
+- Scheduler-maintained TSS `esp0` updates on task switches
 - Round-robin scheduling
 - Tick-based sleeping
 - Cooperative yield via `int $48`
@@ -385,7 +394,7 @@ When adding comments:
 
 If you continue extending DFOS, the next high-value kernel tasks are:
 
-1. Real page-table growth beyond the bootstrap map
+1. Per-process page-directory ownership and user/kernel address-space split
 2. Locking primitives for shared kernel subsystems
 3. Reaping and joining kernel tasks
 4. A real vnode and directory-aware VFS
