@@ -6,6 +6,7 @@
 #include <kernel/gdt.h>
 #include <kernel/heap.h>
 #include <kernel/interrupts.h>
+#include <kernel/paging.h>
 #include <kernel/panic.h>
 #include <kernel/scheduler.h>
 
@@ -32,6 +33,7 @@ typedef struct task {
 	uint32_t wakeup_tick;
 	kernel_task_entry_t entry;
 	void* arg;
+	paging_space_t* space;
 } task_t;
 
 static task_t tasks[MAX_TASKS];
@@ -89,11 +91,13 @@ static interrupt_frame_t* schedule_next(interrupt_frame_t* frame, bool force_swi
 		candidate->state = TASK_RUNNING;
 		ticks_since_switch = 0;
 		gdt_set_kernel_stack(candidate->kernel_stack_top);
+		paging_switch_space(candidate->space);
 		return candidate->frame;
 	}
 
 	current->state = TASK_RUNNING;
 	gdt_set_kernel_stack(current->kernel_stack_top);
+	paging_switch_space(current->space);
 	return frame;
 }
 
@@ -106,8 +110,10 @@ static task_t* allocate_task_slot(void) {
 }
 
 void scheduler_init(void) {
-	for (size_t i = 0; i < MAX_TASKS; i++)
+	for (size_t i = 0; i < MAX_TASKS; i++) {
 		tasks[i].state = TASK_UNUSED;
+		tasks[i].space = NULL;
+	}
 	current_task_index = 0;
 	ticks_since_switch = 0;
 	system_ticks = 0;
@@ -127,6 +133,7 @@ void scheduler_bootstrap_current(const char* name) {
 	tasks[0].wakeup_tick = 0;
 	tasks[0].entry = NULL;
 	tasks[0].arg = NULL;
+	tasks[0].space = paging_current_space();
 	current_task_index = 0;
 	gdt_set_kernel_stack(tasks[0].kernel_stack_top);
 }
@@ -136,7 +143,16 @@ bool scheduler_create_kernel_task(const char* name, kernel_task_entry_t entry, v
 	if (task == NULL)
 		return false;
 
+	paging_space_t* space = paging_create_process_space();
+	if (space == NULL)
+		return false;
+
 	uint8_t* stack = (uint8_t*) kmalloc(TASK_STACK_SIZE);
+	if (stack == NULL) {
+		paging_destroy_process_space(space);
+		return false;
+	}
+
 	interrupt_frame_t* frame =
 		(interrupt_frame_t*) (stack + TASK_STACK_SIZE - sizeof(interrupt_frame_t));
 
@@ -164,6 +180,7 @@ bool scheduler_create_kernel_task(const char* name, kernel_task_entry_t entry, v
 	task->wakeup_tick = 0;
 	task->entry = entry;
 	task->arg = arg;
+	task->space = space;
 	return true;
 }
 
@@ -240,6 +257,8 @@ bool scheduler_get_task_snapshot(uint32_t index, scheduler_task_snapshot_t* snap
 			snapshot->name = tasks[i].name;
 			snapshot->state = task_state_name(tasks[i].state);
 			snapshot->wakeup_tick = tasks[i].wakeup_tick;
+			snapshot->address_space_root =
+				tasks[i].space != NULL ? paging_space_root_physical(tasks[i].space) : 0;
 			return true;
 		}
 

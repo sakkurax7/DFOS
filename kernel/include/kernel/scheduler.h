@@ -13,6 +13,7 @@ typedef struct scheduler_task_snapshot {
 	const char* name;
 	const char* state;
 	uint32_t wakeup_tick;
+	uint32_t address_space_root;
 } scheduler_task_snapshot_t;
 
 void scheduler_init(void);

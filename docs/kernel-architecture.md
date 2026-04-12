@@ -19,15 +19,17 @@ Initialization order in [`../kernel/kernel/kernel.c`](../kernel/kernel/kernel.c)
 5. GDT installation
 6. IDT installation and IRQ controller initialization
 7. Paging capability setup
-8. Physical memory manager initialization
-9. Early heap initialization
-10. Active input driver initialization
-11. Initrd/VFS setup
-12. Scheduler setup
-13. Active timer driver initialization
-14. Bootstrap task registration
-15. Debugger task creation and worker task creation
-16. Interrupt enable and idle loop
+8. Boot-info handoff normalization
+9. Physical memory manager initialization
+10. Legacy paging shared-kernel-table finalization (no-op in PAE mode)
+11. Early heap initialization
+12. Active input driver initialization
+13. Initrd/VFS setup
+14. Scheduler setup
+15. Active timer driver initialization
+16. Bootstrap task registration
+17. Debugger task creation and worker task creation
+18. Interrupt enable and idle loop
 
 ## Hardware Abstraction Layer
 
@@ -121,34 +123,37 @@ Bootstrap paging is enabled in assembly using a higher-half mapping rooted at `0
 - Page-level map/unmap helpers across the kernel dynamic mapping range
 - `.text` and `.rodata` write protection enforcement by clearing PTE RW bits after paging initialization
 - Post-switch identity-map teardown of the lower half so low virtual addresses fault by default
+- Process-owned paging-space objects with distinct top-level `CR3` roots
+- User/kernel split enforcement (`0x00400000`-`0xBFFFFFFF` user, `0xC0000000+` kernel)
+- Explicit user-page map/unmap helpers that target a selected process space
+- VMA-tree-backed kernel virtual allocator for dynamic page ranges
 
 Important limitations:
 
 - `paging_phys_to_virt` uses a bounded direct-map aperture (currently first 256 MiB of physical space).
-- The kernel still uses one shared address space; per-process page directories for userland are not wired yet.
+- User-mode execution is not wired yet; the split and mappings are in place for later privilege transitions.
 
 ## Physical Memory Manager
 
-[`../kernel/kernel/pmm.c`](../kernel/kernel/pmm.c) parses the Multiboot memory map and builds a bitmap-based frame allocator.
+[`../kernel/kernel/pmm.c`](../kernel/kernel/pmm.c) consumes memory information through the bootloader-neutral [`../kernel/kernel/bootinfo.c`](../kernel/kernel/bootinfo.c) layer and builds a bitmap-based frame allocator.
 
 Behavior:
 
 - Starts with all frames reserved
-- Marks Multiboot `available` regions free
-- Re-reserves low memory, the kernel image, Multiboot structures, loaded modules, and the bitmap itself
+- Marks bootloader-reported `available` regions free
+- Re-reserves low memory, the kernel image, boot-info structures, loaded modules, and the bitmap itself
 - Supports single-frame and contiguous-frame allocation and free operations
 
 This now backs live on-demand page-table growth and general physical memory ownership tracking.
 
 ## Kernel Heap
 
-[`../kernel/kernel/heap.c`](../kernel/kernel/heap.c) implements an early first-fit allocator:
+[`../kernel/kernel/heap.c`](../kernel/kernel/heap.c) now implements a slab-based allocator:
 
-- Backed by the initial bootstrap-mapped window
-- Split and coalesce block management
-- `kmalloc`, `kzalloc`, `kfree`
-
-This is intentionally simple and works as an early-kernel allocator. It is not yet a demand-mapped heap.
+- Size-class slab caches for small allocations
+- Page-backed path for large allocations
+- Reuse of empty slabs with bounded retention per cache
+- `kmalloc`, `kzalloc`, `kfree` API remains unchanged for callers
 
 ## Multitasking
 
@@ -160,7 +165,7 @@ This is intentionally simple and works as an early-kernel allocator. It is not y
 - Software-interrupt yield path
 - Tick-based sleep queue
 
-Tasks share the kernel address space and resume by swapping the saved interrupt frame used by the common ISR return path.
+Tasks now own separate paging spaces and the scheduler switches `CR3` during context switches. Execution is still kernel-mode only.
 
 ## Input And Debugger
 
@@ -173,6 +178,7 @@ Tasks share the kernel address space and resume by swapping the saved interrupt 
 - `mem`
 - `ls`
 - `cat <file>`
+- `test [all|memmap|vma|slab|aspace]`
 - `continue`
 
 ## Initrd And Filesystem

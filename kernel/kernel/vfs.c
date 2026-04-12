@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <kernel/boot.h>
+#include <kernel/bootinfo.h>
 #include <kernel/paging.h>
 #include <kernel/vfs.h>
 
@@ -81,18 +81,18 @@ static void vfs_load_initrd_module(uint32_t module_start, uint32_t module_end) {
 	}
 }
 
-void vfs_init(uint32_t multiboot_info_addr) {
-	const multiboot_info_t* mbi =
-		(const multiboot_info_t*) paging_phys_to_virt(multiboot_info_addr);
+void vfs_init(void) {
 	file_count = 0;
 
-	if ((mbi->flags & MULTIBOOT_INFO_MODULES) == 0 || mbi->mods_count == 0)
+	if (bootinfo_module_count() == 0)
 		return;
 
 	// DFOS currently treats the first boot module as the system initrd by convention.
-	const multiboot_module_t* modules =
-		(const multiboot_module_t*) paging_phys_to_virt(mbi->mods_addr);
-	vfs_load_initrd_module(modules[0].mod_start, modules[0].mod_end);
+	bootinfo_module_t module;
+	if (!bootinfo_module_at(0, &module))
+		return;
+
+	vfs_load_initrd_module(module.start, module.end);
 }
 
 uint32_t vfs_file_count(void) {

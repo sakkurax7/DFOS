@@ -11,7 +11,7 @@ typedef struct vfs_node {
 	size_t size;
 } vfs_node_t;
 
-void vfs_init(uint32_t multiboot_info_addr);
+void vfs_init(void);
 uint32_t vfs_file_count(void);
 bool vfs_get_file(uint32_t index, vfs_node_t* node);
 bool vfs_open(const char* path, vfs_node_t* node);

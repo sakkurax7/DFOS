@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-void pmm_init(uint32_t multiboot_info_addr);
+void pmm_init(void);
 bool pmm_alloc_frame(uint32_t* physical_addr_out);
 void pmm_free_frame(uint32_t physical_addr);
 bool pmm_alloc_frames(uint32_t frame_count, uint32_t* physical_addr_out);

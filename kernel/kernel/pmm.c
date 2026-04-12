@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include <kernel/boot.h>
+#include <kernel/bootinfo.h>
 #include <kernel/paging.h>
 #include <kernel/panic.h>
 #include <kernel/pmm.h>
@@ -16,8 +17,12 @@ static uint32_t total_memory_kib;
 static uint32_t bitmap_end_phys;
 static bool initialized;
 
-static uint32_t align_up(uint32_t value, uint32_t alignment) {
+static uint32_t align_up_u32(uint32_t value, uint32_t alignment) {
 	return (value + alignment - 1) & ~(alignment - 1);
+}
+
+static uint64_t align_up_u64(uint64_t value, uint32_t alignment) {
+	return (value + (uint64_t) alignment - 1u) & ~((uint64_t) alignment - 1u);
 }
 
 static void bitmap_set(uint32_t frame) {
@@ -49,7 +54,8 @@ static void release_frame(uint32_t frame) {
 
 void pmm_mark_available_range(uint32_t base, uint32_t length) {
 	const uint32_t start_frame = base / PAGE_SIZE;
-	const uint32_t end_frame = (base + length) / PAGE_SIZE;
+	const uint64_t end = (uint64_t) base + (uint64_t) length;
+	const uint32_t end_frame = (uint32_t) (end / PAGE_SIZE);
 
 	for (uint32_t frame = start_frame; frame < end_frame && frame < total_frames; frame++)
 		release_frame(frame);
@@ -57,40 +63,55 @@ void pmm_mark_available_range(uint32_t base, uint32_t length) {
 
 void pmm_reserve_range(uint32_t base, uint32_t length) {
 	const uint32_t start_frame = base / PAGE_SIZE;
-	const uint32_t end_frame = align_up(base + length, PAGE_SIZE) / PAGE_SIZE;
+	const uint64_t end = align_up_u64((uint64_t) base + (uint64_t) length, PAGE_SIZE);
+	const uint32_t end_frame = (uint32_t) (end / PAGE_SIZE);
 
 	for (uint32_t frame = start_frame; frame < end_frame && frame < total_frames; frame++)
 		reserve_frame(frame);
 }
 
-void pmm_init(uint32_t multiboot_info_addr) {
+// The current 32-bit allocator tracks addresses in uint32_t and therefore caps
+// managed space at the last page-aligned physical address below 4 GiB.
+#define PMM_PHYS_CAP ((uint64_t) 0xFFFFF000u)
+
+void pmm_init(void) {
 	initialized = false;
-	const multiboot_info_t* mbi =
-		(const multiboot_info_t*) paging_phys_to_virt(multiboot_info_addr);
 	uint32_t highest_physical = 0;
 
-	if ((mbi->flags & MULTIBOOT_INFO_MEM_MAP) != 0) {
-		const uint32_t mmap_end = mbi->mmap_addr + mbi->mmap_length;
-		for (uint32_t entry_addr = mbi->mmap_addr; entry_addr < mmap_end; ) {
-			const multiboot_memory_map_t* entry =
-				(const multiboot_memory_map_t*) paging_phys_to_virt(entry_addr);
-			const uint32_t region_end = (uint32_t) (entry->addr + entry->len);
-			if (region_end > highest_physical)
-				highest_physical = region_end;
-			entry_addr += entry->size + sizeof(entry->size);
+	if (bootinfo_has_memory_map()) {
+		bootinfo_memory_iterator_t iterator;
+		bootinfo_memory_region_t region;
+
+		for (bool has_entry = bootinfo_memory_begin(&iterator, &region);
+				has_entry; has_entry = bootinfo_memory_next(&iterator, &region)) {
+			uint64_t region_end = region.base + region.length;
+			if (region_end < region.base)
+				region_end = PMM_PHYS_CAP;
+			if (region_end > PMM_PHYS_CAP)
+				region_end = PMM_PHYS_CAP;
+
+			if (region_end == 0)
+				continue;
+
+			const uint32_t region_end_u32 = (uint32_t) region_end;
+			if (region_end_u32 > highest_physical)
+				highest_physical = region_end_u32;
 		}
-	} else if ((mbi->flags & MULTIBOOT_INFO_MEMORY) != 0) {
-		highest_physical = (mbi->mem_upper + 1024u) * 1024u;
+	} else if (bootinfo_has_memory_kib_info()) {
+		highest_physical = (bootinfo_upper_memory_kib() + 1024u) * 1024u;
 	} else {
 		panic("no memory map provided by bootloader");
 	}
 
-	total_frames = align_up(highest_physical, PAGE_SIZE) / PAGE_SIZE;
+	if (highest_physical == 0)
+		panic("bootloader reported zero physical memory");
+
+	total_frames = align_up_u32(highest_physical, PAGE_SIZE) / PAGE_SIZE;
 	total_memory_kib = total_frames * 4u;
 
 	const uint32_t kernel_end_phys = paging_virt_to_phys(&_kernel_end);
-	const uint32_t bitmap_bytes = align_up((total_frames + 7u) / 8u, PAGE_SIZE);
-	const uint32_t bitmap_phys = align_up(kernel_end_phys, PAGE_SIZE);
+	const uint32_t bitmap_bytes = align_up_u32((total_frames + 7u) / 8u, PAGE_SIZE);
+	const uint32_t bitmap_phys = align_up_u32(kernel_end_phys, PAGE_SIZE);
 
 	bitmap_end_phys = bitmap_phys + bitmap_bytes;
 	if (bitmap_end_phys >= paging_window_end_phys())
@@ -103,15 +124,26 @@ void pmm_init(uint32_t multiboot_info_addr) {
 
 	free_frames = 0;
 
-	if ((mbi->flags & MULTIBOOT_INFO_MEM_MAP) != 0) {
-		// Start from "everything reserved" and selectively free only Multiboot-available ranges.
-		const uint32_t mmap_end = mbi->mmap_addr + mbi->mmap_length;
-		for (uint32_t entry_addr = mbi->mmap_addr; entry_addr < mmap_end; ) {
-			const multiboot_memory_map_t* entry =
-				(const multiboot_memory_map_t*) paging_phys_to_virt(entry_addr);
-			if (entry->type == MULTIBOOT_MEMORY_AVAILABLE)
-				pmm_mark_available_range((uint32_t) entry->addr, (uint32_t) entry->len);
-			entry_addr += entry->size + sizeof(entry->size);
+	if (bootinfo_has_memory_map()) {
+		// Start from "everything reserved" and selectively free only bootloader-available ranges.
+		bootinfo_memory_iterator_t iterator;
+		bootinfo_memory_region_t region;
+		for (bool has_entry = bootinfo_memory_begin(&iterator, &region);
+				has_entry; has_entry = bootinfo_memory_next(&iterator, &region)) {
+			if (region.type != MULTIBOOT_MEMORY_AVAILABLE || region.length == 0)
+				continue;
+
+			uint64_t start = region.base;
+			uint64_t end = region.base + region.length;
+			if (end <= start)
+				continue;
+
+			if (start >= PMM_PHYS_CAP)
+				continue;
+			if (end > PMM_PHYS_CAP)
+				end = PMM_PHYS_CAP;
+
+			pmm_mark_available_range((uint32_t) start, (uint32_t) (end - start));
 		}
 	}
 
@@ -119,22 +151,29 @@ void pmm_init(uint32_t multiboot_info_addr) {
 	pmm_reserve_range((uint32_t) paging_virt_to_phys(&_kernel_start),
 		kernel_end_phys - paging_virt_to_phys(&_kernel_start));
 	pmm_reserve_range(bitmap_phys, bitmap_bytes);
-	pmm_reserve_range(multiboot_info_addr, sizeof(multiboot_info_t));
 
-	if ((mbi->flags & MULTIBOOT_INFO_MEM_MAP) != 0)
-		pmm_reserve_range(mbi->mmap_addr, mbi->mmap_length);
+	if (bootinfo_info_phys() != 0 && bootinfo_info_size_hint() != 0)
+		pmm_reserve_range(bootinfo_info_phys(), bootinfo_info_size_hint());
 
-	if ((mbi->flags & MULTIBOOT_INFO_MODULES) != 0) {
-		const multiboot_module_t* modules =
-			(const multiboot_module_t*) paging_phys_to_virt(mbi->mods_addr);
-		// Modules stay pinned so the initrd and future boot modules are not recycled as free RAM.
-		pmm_reserve_range(mbi->mods_addr, mbi->mods_count * sizeof(multiboot_module_t));
+	if (bootinfo_has_memory_map())
+		pmm_reserve_range(bootinfo_memory_map_phys(), bootinfo_memory_map_size());
 
-		for (uint32_t i = 0; i < mbi->mods_count; i++) {
-			pmm_reserve_range(modules[i].mod_start, modules[i].mod_end - modules[i].mod_start);
-			if (modules[i].string != 0)
-				pmm_reserve_range(modules[i].string, 128);
-		}
+	const uint32_t module_table_phys = bootinfo_module_table_phys();
+	const uint32_t module_table_size = bootinfo_module_table_size();
+	if (module_table_phys != 0 && module_table_size != 0)
+		pmm_reserve_range(module_table_phys, module_table_size);
+
+	const uint32_t module_count = bootinfo_module_count();
+	for (uint32_t i = 0; i < module_count; i++) {
+		bootinfo_module_t module;
+		if (!bootinfo_module_at(i, &module))
+			continue;
+
+		if (module.end > module.start)
+			pmm_reserve_range(module.start, module.end - module.start);
+
+		if (module.string != NULL)
+			pmm_reserve_range(paging_virt_to_phys(module.string), 128);
 	}
 
 	initialized = true;
