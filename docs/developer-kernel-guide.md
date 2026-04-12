@@ -6,15 +6,15 @@ This guide explains how DFOS is organized today, how to extend it safely, and wh
 
 ## System Model
 
-DFOS currently runs as a single-address-space 32-bit x86 kernel:
+DFOS currently runs as a 32-bit x86 kernel with per-task address-space ownership:
 
 - Booted by a Multiboot-compatible loader
 - Mapped into the higher half at `0xC0000000`
-- Running only kernel threads
+- Running only kernel threads today
 - Using small generic interfaces for console, input, timer, IRQ, and CPU services
 - Backed today by VGA text mode, PIC, PIT, and PS/2-era PC hardware on the i386 platform
 
-There is no user and kernel separation yet. "Applications" currently means:
+The user/kernel address split is now enforced in paging, but user-mode execution transitions are still future work. "Applications" currently means:
 
 - New kernel threads created inside the kernel
 - Tools and content shipped in the initrd
@@ -65,20 +65,23 @@ Current initialization sequence:
 5. GDT
 6. IDT and IRQ controller
 7. Paging capability setup
-8. Physical memory manager
-9. Early heap
-10. Input
-11. VFS and initrd indexing
-12. Scheduler
-13. Timer
-14. Bootstrap current-task registration
-15. Debugger task
-16. Demo worker tasks
-17. Global interrupt enable
+8. Boot-info normalization
+9. Physical memory manager
+10. Legacy paging shared-kernel-table finalization (no-op in PAE mode)
+11. Early heap
+12. Input
+13. VFS and initrd indexing
+14. Scheduler
+15. Timer
+16. Bootstrap current-task registration
+17. Debugger task
+18. Demo worker tasks
+19. Global interrupt enable
 
 That order matters. In particular:
 
 - `pmm_init` depends on bootstrap paging helpers already being usable
+- `paging_finalize_bootstrap` must run after PMM init and before process address spaces are cloned in the scheduler
 - `heap_init` depends on the PMM reserving the bitmap and kernel image
 - `input_initialize` depends on the active platform modules already being registered and selected
 - `timer_initialize` depends on the IRQ controller being live
@@ -141,14 +144,14 @@ That gives you one reusable boot-time selection pattern instead of embedding har
 
 ### Physical Memory Manager
 
-See [`../kernel/kernel/pmm.c`](../kernel/kernel/pmm.c).
+See [`../kernel/kernel/pmm.c`](../kernel/kernel/pmm.c) and [`../kernel/kernel/bootinfo.c`](../kernel/kernel/bootinfo.c).
 
 Design:
 
 - Bitmap-based frame ownership
 - Starts from "all reserved"
-- Frees only Multiboot-available regions
-- Re-reserves the kernel, bitmap, Multiboot metadata, and modules
+- Frees only bootloader-reported available regions
+- Re-reserves the kernel, bitmap, boot-info metadata, and modules
 
 Use it when you need:
 
@@ -171,25 +174,24 @@ Current paging capabilities:
 - Virtual-to-physical translation by page-table walk
 - Page map/unmap across the kernel dynamic range
 - Kernel section hardening: `.text` and `.rodata` pages are marked read-only
-- A monotonic page allocator in the dedicated high virtual dynamic range
+- Process-owned `CR3` roots with user-page map/unmap APIs per process space
+- User/kernel split (`0x00400000`-`0xBFFFFFFF` user, `0xC0000000+` kernel)
+- A VMA-tree-backed allocator in the dedicated high virtual dynamic range
 
 Current limits:
 
 - `paging_phys_to_virt` currently supports a bounded direct-map aperture (first 256 MiB physical).
-- Per-process user address spaces are not implemented yet; the kernel still runs in a shared address space model.
+- User-mode privilege transitions are not implemented yet.
 
 ### Heap
 
 See [`../kernel/kernel/heap.c`](../kernel/kernel/heap.c).
 
-The heap is intentionally simple:
+The heap now uses slab caches:
 
-- First-fit allocator
-- Split and coalesce blocks
-- No separate slab or object caches
-- No backing-store growth yet
-
-For larger future work, prefer building on page allocation rather than stretching the current heap model too far.
+- Size-class slab allocations for small objects
+- Page-backed large allocations
+- API remains `kmalloc`, `kzalloc`, `kfree`
 
 ## Interrupt Model
 
@@ -226,6 +228,7 @@ Current thread model:
 - Tick-based sleeping
 - Cooperative yield via `int $48`
 - Preemptive time slicing through the active timer driver
+- `CR3` switching to each task's owned paging space on context switches
 
 When creating new kernel services:
 
@@ -236,7 +239,7 @@ When creating new kernel services:
 Current limits:
 
 - There are no mutexes, semaphores, condition variables, or wait queues yet
-- All tasks share one address space
+- Tasks still run in ring 0
 - Zombie tasks are not reaped yet
 
 ## Platform Services, Debug, And Files
@@ -283,6 +286,14 @@ The debugger is a regular kernel thread, not a special stop-the-world monitor. T
 - It is useful for inspection and basic control
 - It does not halt every other thread automatically
 - Output from other tasks may interleave unless you later add console locking
+
+Relevant memory-management test commands:
+
+- `test memmap`
+- `test vma`
+- `test slab`
+- `test aspace`
+- `test all`
 
 ### Initrd And VFS
 

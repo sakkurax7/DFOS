@@ -6,6 +6,7 @@
 #include <kernel/paging.h>
 #include <kernel/panic.h>
 #include <kernel/pmm.h>
+#include <kernel/vma.h>
 #include <kernel/x86.h>
 
 extern uint32_t boot_page_table_pool[];
@@ -37,7 +38,17 @@ static paging_runtime_mode_t paging_mode = PAGING_MODE_LEGACY;
 #define PAGE_WRITABLE                  PAGING_FLAG_WRITABLE
 #define PAGE_USER                      PAGING_FLAG_USER
 
-static uint32_t next_dynamic_virtual = KERNEL_DYNAMIC_BASE;
+#define PAGING_MAX_SPACES              32u
+
+struct paging_space {
+	bool in_use;
+	uint32_t root_physical;
+};
+
+static paging_space_t paging_spaces[PAGING_MAX_SPACES];
+static paging_space_t* kernel_space;
+static paging_space_t* current_space;
+static vma_tree_t kernel_vma_tree;
 
 static uint32_t align_down_u32(uint32_t value, uint32_t alignment) {
 	return value & ~(alignment - 1u);
@@ -53,6 +64,31 @@ static void paging_invalidate_page(const void* virtual_addr) {
 
 static void paging_flush_tlb(void) {
 	x86_write_cr3(x86_read_cr3());
+}
+
+static bool paging_address_is_user(uint32_t virtual_addr) {
+	return virtual_addr >= PAGING_USER_BASE && virtual_addr < PAGING_USER_LIMIT;
+}
+
+static bool paging_address_is_kernel(uint32_t virtual_addr) {
+	return virtual_addr >= KERNEL_VMA;
+}
+
+static paging_space_t* paging_allocate_space_record(void) {
+	for (uint32_t i = 0; i < PAGING_MAX_SPACES; i++) {
+		if (paging_spaces[i].in_use)
+			continue;
+		paging_spaces[i].in_use = true;
+		paging_spaces[i].root_physical = 0;
+		return &paging_spaces[i];
+	}
+
+	return NULL;
+}
+
+static void paging_release_space_record(paging_space_t* space) {
+	space->in_use = false;
+	space->root_physical = 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -81,6 +117,14 @@ static uint32_t legacy_table_index_of(uint32_t virtual_addr) {
 
 static volatile uint32_t* legacy_page_table_from_directory_index(uint32_t directory_index) {
 	return (volatile uint32_t*) (LEGACY_PT_RECURSIVE_BASE + directory_index * PAGE_SIZE);
+}
+
+static volatile uint32_t* legacy_space_page_directory(const paging_space_t* space) {
+	return (volatile uint32_t*) paging_phys_to_virt(space->root_physical & 0xFFFFF000u);
+}
+
+static volatile uint32_t* legacy_page_table_from_pde(uint32_t pde) {
+	return (volatile uint32_t*) paging_phys_to_virt(pde & 0xFFFFF000u);
 }
 
 static bool legacy_alloc_page_table_frame(uint32_t* physical_out, bool* backed_by_pmm_out) {
@@ -162,6 +206,29 @@ static bool legacy_translate_address(uint32_t virtual_addr, uint32_t* physical_o
 	return true;
 }
 
+static bool legacy_translate_address_in_space(const paging_space_t* space, uint32_t virtual_addr,
+		uint32_t* physical_out) {
+	const volatile uint32_t* directory = legacy_space_page_directory(space);
+	const uint32_t dir = legacy_directory_index_of(virtual_addr);
+	const uint32_t pde = directory[dir];
+
+	if ((pde & PAGE_PRESENT) == 0)
+		return false;
+
+	if ((pde & 0x080u) != 0) {
+		*physical_out = (pde & 0xFFC00000u) | (virtual_addr & 0x003FFFFFu);
+		return true;
+	}
+
+	const volatile uint32_t* table = legacy_page_table_from_pde(pde);
+	const uint32_t pte = table[legacy_table_index_of(virtual_addr)];
+	if ((pte & PAGE_PRESENT) == 0)
+		return false;
+
+	*physical_out = (pte & 0xFFFFF000u) | (virtual_addr & 0xFFFu);
+	return true;
+}
+
 static bool legacy_is_page_table_empty(uint32_t directory_index) {
 	const volatile uint32_t* table = legacy_page_table_from_directory_index(directory_index);
 
@@ -232,6 +299,69 @@ static bool legacy_is_mapped(const void* virtual_addr) {
 	return (table[legacy_table_index_of(address)] & PAGE_PRESENT) != 0;
 }
 
+static bool legacy_map_user_page_in_space(paging_space_t* space, uint32_t virtual_addr,
+		uint32_t physical_addr, uint32_t flags) {
+	const uint32_t directory_index = legacy_directory_index_of(virtual_addr);
+	const uint32_t table_index = legacy_table_index_of(virtual_addr);
+	volatile uint32_t* directory = legacy_space_page_directory(space);
+	uint32_t pde = directory[directory_index];
+	volatile uint32_t* table;
+
+	if ((pde & PAGE_PRESENT) == 0) {
+		uint32_t table_physical;
+		if (!pmm_alloc_frame(&table_physical))
+			return false;
+
+		table = (volatile uint32_t*) paging_phys_to_virt(table_physical);
+		for (uint32_t i = 0; i < LEGACY_PTE_ENTRIES; i++)
+			table[i] = 0;
+
+		pde = (table_physical & 0xFFFFF000u) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+		directory[directory_index] = pde;
+	} else {
+		if ((pde & PAGE_USER) == 0) {
+			pde |= PAGE_USER | PAGE_WRITABLE;
+			directory[directory_index] = pde;
+		}
+		table = legacy_page_table_from_pde(pde);
+	}
+
+	table[table_index] =
+		(physical_addr & 0xFFFFF000u) | PAGE_PRESENT | PAGE_USER | (flags & 0x0FFFu);
+
+	if (space == current_space)
+		paging_invalidate_page((void*) (uintptr_t) virtual_addr);
+	return true;
+}
+
+static void legacy_unmap_user_page_in_space(paging_space_t* space, uint32_t virtual_addr) {
+	const uint32_t directory_index = legacy_directory_index_of(virtual_addr);
+	const uint32_t table_index = legacy_table_index_of(virtual_addr);
+	volatile uint32_t* directory = legacy_space_page_directory(space);
+	const uint32_t pde = directory[directory_index];
+
+	if ((pde & PAGE_PRESENT) == 0)
+		return;
+
+	volatile uint32_t* table = legacy_page_table_from_pde(pde);
+	if ((table[table_index] & PAGE_PRESENT) == 0)
+		return;
+
+	table[table_index] = 0;
+	if (space == current_space)
+		paging_invalidate_page((void*) (uintptr_t) virtual_addr);
+
+	for (uint32_t i = 0; i < LEGACY_PTE_ENTRIES; i++) {
+		if ((table[i] & PAGE_PRESENT) != 0)
+			return;
+	}
+
+	directory[directory_index] = 0;
+	if (space == current_space)
+		paging_flush_tlb();
+	pmm_free_frame(pde & 0xFFFFF000u);
+}
+
 static void legacy_protect_range(uint32_t start, uint32_t end) {
 	if (end <= start)
 		return;
@@ -284,6 +414,14 @@ static uint64_t pae_dynamic_page_tables[PAE_DYNAMIC_PDE_COUNT][PAE_PTE_ENTRIES]
 
 static uint64_t pae_make_entry(uint32_t physical, uint64_t flags) {
 	return ((uint64_t) physical & PAE_ENTRY_ADDR_MASK) | flags;
+}
+
+static uint64_t* pae_space_pdpt(const paging_space_t* space) {
+	return (uint64_t*) paging_phys_to_virt(space->root_physical & 0xFFFFF000u);
+}
+
+static uint64_t* pae_entry_pointer(uint64_t entry) {
+	return (uint64_t*) paging_phys_to_virt((uint32_t) (entry & PAE_ENTRY_ADDR_MASK));
 }
 
 static uint32_t kernel_pointer_to_physical(const void* virtual_addr) {
@@ -469,6 +607,36 @@ static bool pae_translate_address(uint32_t virtual_addr, uint32_t* physical_out)
 	return false;
 }
 
+static bool pae_translate_address_in_space(const paging_space_t* space, uint32_t virtual_addr,
+		uint32_t* physical_out) {
+	const uint32_t pdpt_index = pae_pdpt_index_of(virtual_addr);
+	const uint32_t directory_index = pae_directory_index_of(virtual_addr);
+	const uint32_t table_index = pae_table_index_of(virtual_addr);
+	uint64_t* pdpt = pae_space_pdpt(space);
+	const uint64_t pdpte = pdpt[pdpt_index];
+
+	if ((pdpte & PAE_ENTRY_PRESENT) == 0)
+		return false;
+
+	uint64_t* directory = pae_entry_pointer(pdpte);
+	const uint64_t pde = directory[directory_index];
+	if ((pde & PAE_ENTRY_PRESENT) == 0)
+		return false;
+
+	if ((pde & PAE_ENTRY_PAGE_SIZE) != 0) {
+		*physical_out = (uint32_t) (pde & 0x00000000FFE00000ULL) | (virtual_addr & 0x001FFFFFu);
+		return true;
+	}
+
+	uint64_t* table = pae_entry_pointer(pde);
+	const uint64_t pte = table[table_index];
+	if ((pte & PAE_ENTRY_PRESENT) == 0)
+		return false;
+
+	*physical_out = (uint32_t) (pte & PAE_ENTRY_ADDR_MASK) | (virtual_addr & 0xFFFu);
+	return true;
+}
+
 static bool pae_map_page(void* virtual_addr, uint32_t physical_addr, uint32_t flags) {
 	const uint32_t address = (uint32_t) (uintptr_t) virtual_addr;
 	const uint32_t directory_index = pae_directory_index_of(address);
@@ -541,6 +709,113 @@ static bool pae_is_mapped(const void* virtual_addr) {
 	return pae_translate_address((uint32_t) (uintptr_t) virtual_addr, &physical);
 }
 
+static bool pae_table_has_present_entries(const uint64_t* table, uint32_t entry_count) {
+	for (uint32_t i = 0; i < entry_count; i++) {
+		if ((table[i] & PAE_ENTRY_PRESENT) != 0)
+			return true;
+	}
+
+	return false;
+}
+
+static bool pae_map_user_page_in_space(paging_space_t* space, uint32_t virtual_addr,
+		uint32_t physical_addr, uint32_t flags) {
+	const uint32_t pdpt_index = pae_pdpt_index_of(virtual_addr);
+	const uint32_t directory_index = pae_directory_index_of(virtual_addr);
+	const uint32_t table_index = pae_table_index_of(virtual_addr);
+	uint64_t* pdpt = pae_space_pdpt(space);
+	uint64_t pdpte = pdpt[pdpt_index];
+	uint64_t* directory;
+	uint64_t pde;
+	uint64_t* table;
+
+	if ((pdpte & PAE_ENTRY_PRESENT) == 0) {
+		uint32_t directory_physical;
+		if (!pmm_alloc_frame(&directory_physical))
+			return false;
+
+		directory = (uint64_t*) paging_phys_to_virt(directory_physical);
+		for (uint32_t i = 0; i < PAE_PDE_ENTRIES; i++)
+			directory[i] = 0;
+
+		pdpte = pae_make_entry(directory_physical,
+			PAE_ENTRY_PRESENT | PAE_ENTRY_WRITABLE | PAE_ENTRY_USER);
+		pdpt[pdpt_index] = pdpte;
+	} else {
+		if ((pdpte & PAE_ENTRY_USER) == 0) {
+			pdpte |= PAE_ENTRY_USER | PAE_ENTRY_WRITABLE;
+			pdpt[pdpt_index] = pdpte;
+		}
+		directory = pae_entry_pointer(pdpte);
+	}
+
+	pde = directory[directory_index];
+	if ((pde & PAE_ENTRY_PRESENT) == 0) {
+		uint32_t table_physical;
+		if (!pmm_alloc_frame(&table_physical))
+			return false;
+
+		table = (uint64_t*) paging_phys_to_virt(table_physical);
+		for (uint32_t i = 0; i < PAE_PTE_ENTRIES; i++)
+			table[i] = 0;
+
+		pde = pae_make_entry(table_physical,
+			PAE_ENTRY_PRESENT | PAE_ENTRY_WRITABLE | PAE_ENTRY_USER);
+		directory[directory_index] = pde;
+	} else {
+		if ((pde & PAE_ENTRY_USER) == 0) {
+			pde |= PAE_ENTRY_USER | PAE_ENTRY_WRITABLE;
+			directory[directory_index] = pde;
+		}
+		table = pae_entry_pointer(pde);
+	}
+
+	table[table_index] =
+		pae_make_entry(physical_addr, PAE_ENTRY_PRESENT | PAE_ENTRY_USER | (flags & 0x0FFFu));
+
+	if (space == current_space)
+		paging_invalidate_page((void*) (uintptr_t) virtual_addr);
+	return true;
+}
+
+static void pae_unmap_user_page_in_space(paging_space_t* space, uint32_t virtual_addr) {
+	const uint32_t pdpt_index = pae_pdpt_index_of(virtual_addr);
+	const uint32_t directory_index = pae_directory_index_of(virtual_addr);
+	const uint32_t table_index = pae_table_index_of(virtual_addr);
+	uint64_t* pdpt = pae_space_pdpt(space);
+	const uint64_t pdpte = pdpt[pdpt_index];
+
+	if ((pdpte & PAE_ENTRY_PRESENT) == 0)
+		return;
+
+	uint64_t* directory = pae_entry_pointer(pdpte);
+	const uint64_t pde = directory[directory_index];
+	if ((pde & PAE_ENTRY_PRESENT) == 0 || (pde & PAE_ENTRY_PAGE_SIZE) != 0)
+		return;
+
+	uint64_t* table = pae_entry_pointer(pde);
+	if ((table[table_index] & PAE_ENTRY_PRESENT) == 0)
+		return;
+
+	table[table_index] = 0;
+	if (space == current_space)
+		paging_invalidate_page((void*) (uintptr_t) virtual_addr);
+
+	if (pae_table_has_present_entries(table, PAE_PTE_ENTRIES))
+		return;
+
+	directory[directory_index] = 0;
+	pmm_free_frame((uint32_t) (pde & PAE_ENTRY_ADDR_MASK));
+
+	if (pae_table_has_present_entries(directory, PAE_PDE_ENTRIES))
+		return;
+
+	pdpt[pdpt_index] = 0;
+	pmm_free_frame((uint32_t) (pdpte & PAE_ENTRY_ADDR_MASK));
+	if (space == current_space)
+		paging_flush_tlb();
+}
+
 static void pae_protect_range(uint32_t start, uint32_t end) {
 	if (end <= start)
 		return;
@@ -581,6 +856,13 @@ static void pae_drop_identity_mapping(void) {
 // -----------------------------------------------------------------------------
 
 static bool paging_translate_address(uint32_t virtual_addr, uint32_t* physical_out) {
+	if (current_space != NULL) {
+		if (paging_mode == PAGING_MODE_PAE)
+			return pae_translate_address_in_space(current_space, virtual_addr, physical_out);
+
+		return legacy_translate_address_in_space(current_space, virtual_addr, physical_out);
+	}
+
 	if (paging_mode == PAGING_MODE_PAE)
 		return pae_translate_address(virtual_addr, physical_out);
 
@@ -610,10 +892,15 @@ void paging_init(uint32_t multiboot_info_addr) {
 		(uint32_t) (((uintptr_t) boot_page_table_pool_end - (uintptr_t) boot_page_table_pool) /
 			PAGE_SIZE);
 	legacy_next_early_table = 0;
-	next_dynamic_virtual = KERNEL_DYNAMIC_BASE;
 
 	for (uint32_t i = 0; i < LEGACY_PDE_ENTRIES; i++)
 		legacy_table_backed_by_pmm[i] = false;
+	for (uint32_t i = 0; i < PAGING_MAX_SPACES; i++)
+		paging_spaces[i].in_use = false;
+
+	kernel_space = NULL;
+	current_space = NULL;
+	vma_tree_init(&kernel_vma_tree);
 
 	pae_supported = cpu_has_pae();
 	pae_ready = false;
@@ -629,7 +916,36 @@ void paging_init(uint32_t multiboot_info_addr) {
 		pae_drop_identity_mapping();
 	}
 
+	paging_spaces[0].in_use = true;
+	paging_spaces[0].root_physical = x86_read_cr3() & 0xFFFFF000u;
+	kernel_space = &paging_spaces[0];
+	current_space = kernel_space;
+
 	paging_apply_kernel_protections();
+}
+
+void paging_finalize_bootstrap(void) {
+	if (!pmm_is_initialized())
+		return;
+
+	if (paging_mode != PAGING_MODE_LEGACY)
+		return;
+
+	// Pre-allocate kernel PDE slots so cloned process page directories can share
+	// a stable kernel half without per-task PDE divergence.
+	for (uint32_t address = KERNEL_VMA;
+			address < KERNEL_VMA + KERNEL_DIRECT_MAP_LIMIT_PHYS;
+			address += (LEGACY_PTE_ENTRIES * PAGE_SIZE)) {
+		(void) legacy_get_page_table(address, true, PAGE_WRITABLE);
+	}
+
+	for (uint32_t address = KERNEL_DYNAMIC_BASE;
+			address < KERNEL_DYNAMIC_LIMIT;
+			address += (LEGACY_PTE_ENTRIES * PAGE_SIZE)) {
+		(void) legacy_get_page_table(address, true, PAGE_WRITABLE);
+	}
+
+	paging_flush_tlb();
 }
 
 bool paging_pae_supported(void) {
@@ -679,6 +995,12 @@ uint32_t paging_window_end_phys(void) {
 }
 
 bool paging_map_page(void* virtual_addr, uint32_t physical_addr, uint32_t flags) {
+	const uint32_t address = (uint32_t) (uintptr_t) virtual_addr;
+	if (!paging_address_is_kernel(address))
+		return false;
+	if ((flags & PAGE_USER) != 0)
+		return false;
+
 	if (paging_mode == PAGING_MODE_PAE)
 		return pae_map_page(virtual_addr, physical_addr, flags);
 
@@ -686,6 +1008,10 @@ bool paging_map_page(void* virtual_addr, uint32_t physical_addr, uint32_t flags)
 }
 
 void paging_unmap_page(void* virtual_addr) {
+	const uint32_t address = (uint32_t) (uintptr_t) virtual_addr;
+	if (!paging_address_is_kernel(address))
+		return;
+
 	if (paging_mode == PAGING_MODE_PAE) {
 		pae_unmap_page(virtual_addr);
 		return;
@@ -701,18 +1027,218 @@ bool paging_is_mapped(const void* virtual_addr) {
 	return legacy_is_mapped(virtual_addr);
 }
 
+paging_space_t* paging_kernel_space(void) {
+	return kernel_space;
+}
+
+paging_space_t* paging_current_space(void) {
+	return current_space;
+}
+
+uint32_t paging_space_root_physical(const paging_space_t* space) {
+	if (space == NULL)
+		return 0;
+	return space->root_physical;
+}
+
+void paging_switch_space(paging_space_t* space) {
+	if (space == NULL || !space->in_use || space == current_space)
+		return;
+
+	current_space = space;
+	x86_write_cr3(space->root_physical & 0xFFFFF000u);
+}
+
+static paging_space_t* legacy_create_process_space(void) {
+	uint32_t directory_physical;
+	if (!pmm_alloc_frame(&directory_physical))
+		return NULL;
+
+	volatile uint32_t* directory =
+		(volatile uint32_t*) paging_phys_to_virt(directory_physical & 0xFFFFF000u);
+	for (uint32_t i = 0; i < LEGACY_PDE_ENTRIES; i++)
+		directory[i] = 0;
+
+	const volatile uint32_t* kernel_directory = legacy_space_page_directory(kernel_space);
+	const uint32_t kernel_start_index = legacy_directory_index_of(KERNEL_VMA);
+	for (uint32_t i = kernel_start_index; i < LEGACY_RECURSIVE_PDE_INDEX; i++)
+		directory[i] = kernel_directory[i];
+
+	directory[LEGACY_RECURSIVE_PDE_INDEX] =
+		(directory_physical & 0xFFFFF000u) | PAGE_PRESENT | PAGE_WRITABLE;
+
+	paging_space_t* space = paging_allocate_space_record();
+	if (space == NULL) {
+		pmm_free_frame(directory_physical);
+		return NULL;
+	}
+
+	space->root_physical = directory_physical & 0xFFFFF000u;
+	return space;
+}
+
+static paging_space_t* pae_create_process_space(void) {
+	uint32_t pdpt_physical;
+	if (!pmm_alloc_frame(&pdpt_physical))
+		return NULL;
+
+	uint64_t* pdpt = (uint64_t*) paging_phys_to_virt(pdpt_physical & 0xFFFFF000u);
+	for (uint32_t i = 0; i < PAE_PTE_ENTRIES; i++)
+		pdpt[i] = 0;
+
+	pdpt[PAE_PDPT_ENTRY_KERNEL] =
+		pae_make_entry(kernel_pointer_to_physical(&pae_kernel_page_directory[0]), PAE_ENTRY_PRESENT);
+
+	paging_space_t* space = paging_allocate_space_record();
+	if (space == NULL) {
+		pmm_free_frame(pdpt_physical);
+		return NULL;
+	}
+
+	space->root_physical = pdpt_physical & 0xFFFFF000u;
+	return space;
+}
+
+paging_space_t* paging_create_process_space(void) {
+	if (!pmm_is_initialized())
+		return NULL;
+
+	if (kernel_space == NULL)
+		return NULL;
+
+	if (paging_mode == PAGING_MODE_PAE)
+		return pae_create_process_space();
+
+	return legacy_create_process_space();
+}
+
+static void legacy_destroy_process_space(paging_space_t* space) {
+	volatile uint32_t* directory = legacy_space_page_directory(space);
+	const uint32_t kernel_start_index = legacy_directory_index_of(KERNEL_VMA);
+
+	for (uint32_t dir = 0; dir < kernel_start_index; dir++) {
+		const uint32_t pde = directory[dir];
+		if ((pde & PAGE_PRESENT) == 0)
+			continue;
+
+		volatile uint32_t* table = legacy_page_table_from_pde(pde);
+		for (uint32_t idx = 0; idx < LEGACY_PTE_ENTRIES; idx++) {
+			const uint32_t pte = table[idx];
+			if ((pte & PAGE_PRESENT) == 0)
+				continue;
+			pmm_free_frame(pte & 0xFFFFF000u);
+		}
+
+		pmm_free_frame(pde & 0xFFFFF000u);
+	}
+
+	pmm_free_frame(space->root_physical & 0xFFFFF000u);
+}
+
+static void pae_destroy_process_space(paging_space_t* space) {
+	uint64_t* pdpt = pae_space_pdpt(space);
+
+	for (uint32_t pdpt_index = 0; pdpt_index < PAE_PDPT_ENTRY_KERNEL; pdpt_index++) {
+		const uint64_t pdpte = pdpt[pdpt_index];
+		if ((pdpte & PAE_ENTRY_PRESENT) == 0)
+			continue;
+
+		uint64_t* directory = pae_entry_pointer(pdpte);
+		for (uint32_t pde_index = 0; pde_index < PAE_PDE_ENTRIES; pde_index++) {
+			const uint64_t pde = directory[pde_index];
+			if ((pde & PAE_ENTRY_PRESENT) == 0 || (pde & PAE_ENTRY_PAGE_SIZE) != 0)
+				continue;
+
+			uint64_t* table = pae_entry_pointer(pde);
+			for (uint32_t pte_index = 0; pte_index < PAE_PTE_ENTRIES; pte_index++) {
+				const uint64_t pte = table[pte_index];
+				if ((pte & PAE_ENTRY_PRESENT) == 0)
+					continue;
+				pmm_free_frame((uint32_t) (pte & PAE_ENTRY_ADDR_MASK));
+			}
+
+			pmm_free_frame((uint32_t) (pde & PAE_ENTRY_ADDR_MASK));
+		}
+
+		pmm_free_frame((uint32_t) (pdpte & PAE_ENTRY_ADDR_MASK));
+	}
+
+	pmm_free_frame(space->root_physical & 0xFFFFF000u);
+}
+
+void paging_destroy_process_space(paging_space_t* space) {
+	if (space == NULL || !space->in_use || space == kernel_space)
+		return;
+
+	if (space == current_space)
+		paging_switch_space(kernel_space);
+
+	if (paging_mode == PAGING_MODE_PAE)
+		pae_destroy_process_space(space);
+	else
+		legacy_destroy_process_space(space);
+
+	paging_release_space_record(space);
+}
+
+bool paging_lookup_physical(paging_space_t* space, const void* virtual_addr, uint32_t* physical_out) {
+	if (space == NULL || physical_out == NULL)
+		return false;
+
+	const uint32_t address = (uint32_t) (uintptr_t) virtual_addr;
+	if (paging_mode == PAGING_MODE_PAE)
+		return pae_translate_address_in_space(space, address, physical_out);
+
+	return legacy_translate_address_in_space(space, address, physical_out);
+}
+
+bool paging_map_user_page(paging_space_t* space, void* virtual_addr,
+		uint32_t physical_addr, uint32_t flags) {
+	if (space == NULL || !space->in_use)
+		return false;
+
+	const uint32_t address = (uint32_t) (uintptr_t) virtual_addr;
+	if (!paging_address_is_user(address))
+		return false;
+
+	if ((address & 0xFFFu) != 0 || (physical_addr & 0xFFFu) != 0)
+		return false;
+
+	if (paging_mode == PAGING_MODE_PAE)
+		return pae_map_user_page_in_space(space, address, physical_addr, flags | PAGE_USER);
+
+	return legacy_map_user_page_in_space(space, address, physical_addr, flags | PAGE_USER);
+}
+
+void paging_unmap_user_page(paging_space_t* space, void* virtual_addr) {
+	if (space == NULL || !space->in_use)
+		return;
+
+	const uint32_t address = (uint32_t) (uintptr_t) virtual_addr;
+	if (!paging_address_is_user(address))
+		return;
+
+	if (paging_mode == PAGING_MODE_PAE) {
+		pae_unmap_user_page_in_space(space, address);
+		return;
+	}
+
+	legacy_unmap_user_page_in_space(space, address);
+}
+
 void* paging_alloc_pages(uint32_t page_count) {
 	if (page_count == 0 || !pmm_is_initialized())
 		return NULL;
 
-	if (next_dynamic_virtual >= KERNEL_DYNAMIC_LIMIT)
+	const uint64_t span = (uint64_t) page_count * PAGE_SIZE;
+	if (span == 0 || span > (uint64_t) (KERNEL_DYNAMIC_LIMIT - KERNEL_DYNAMIC_BASE))
 		return NULL;
 
-	const uint32_t available_pages = (KERNEL_DYNAMIC_LIMIT - next_dynamic_virtual) / PAGE_SIZE;
-	if (page_count > available_pages)
+	uint32_t base_virtual;
+	if (!vma_tree_find_gap(&kernel_vma_tree, KERNEL_DYNAMIC_BASE, KERNEL_DYNAMIC_LIMIT,
+			(uint32_t) span, PAGE_SIZE, &base_virtual))
 		return NULL;
 
-	const uint32_t base_virtual = next_dynamic_virtual;
 	uint32_t mapped_pages = 0;
 
 	for (uint32_t i = 0; i < page_count; i++) {
@@ -729,7 +1255,9 @@ void* paging_alloc_pages(uint32_t page_count) {
 		mapped_pages++;
 	}
 
-	next_dynamic_virtual += page_count * PAGE_SIZE;
+	if (!vma_tree_insert(&kernel_vma_tree, base_virtual, base_virtual + (uint32_t) span, 0))
+		goto rollback;
+
 	return (void*) (uintptr_t) base_virtual;
 
 rollback:
@@ -747,7 +1275,16 @@ rollback:
 }
 
 void paging_free_pages(void* base, uint32_t page_count) {
+	if (base == NULL || page_count == 0)
+		return;
+
 	const uint32_t base_virtual = (uint32_t) (uintptr_t) base;
+	const uint64_t end_virtual_64 = (uint64_t) base_virtual + (uint64_t) page_count * PAGE_SIZE;
+	if (end_virtual_64 > 0xFFFFFFFFu)
+		return;
+	const uint32_t end_virtual = (uint32_t) end_virtual_64;
+
+	(void) vma_tree_remove(&kernel_vma_tree, base_virtual, end_virtual);
 
 	for (uint32_t i = 0; i < page_count; i++) {
 		const uint32_t virtual_page = base_virtual + i * PAGE_SIZE;

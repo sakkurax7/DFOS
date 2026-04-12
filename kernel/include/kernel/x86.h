@@ -46,6 +46,12 @@ static inline uint32_t x86_read_cr4(void) {
 	return value;
 }
 
+static inline uint32_t x86_read_eflags(void) {
+	uint32_t value;
+	asm volatile("pushf; pop %0" : "=r"(value));
+	return value;
+}
+
 static inline void x86_cli(void) {
 	asm volatile("cli");
 }

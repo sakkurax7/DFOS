@@ -29,6 +29,7 @@ LIBS:=$(LIBS) $(KERNEL_ARCH_LIBS)
 
 KERNEL_OBJS=\
 $(KERNEL_ARCH_OBJS) \
+kernel/bootinfo.o \
 kernel/console.o \
 kernel/heap.o \
 kernel/input.o \
@@ -42,6 +43,7 @@ kernel/pmm.o \
 kernel/scheduler.o \
 kernel/stack_protector.o \
 kernel/timer.o \
+kernel/vma.o \
 kernel/vfs.o \
 
 OBJS=\

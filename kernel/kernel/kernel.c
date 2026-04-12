@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include <kernel/boot.h>
+#include <kernel/bootinfo.h>
 #include <kernel/console.h>
 #include <kernel/cpu.h>
 #include <kernel/gdt.h>
@@ -24,6 +25,8 @@
 static void worker_task(void* arg) {
 	const char* name = (const char*) arg;
 	uint32_t counter = 0;
+	(void) name;
+	(void) counter;
 
 	while (true) {
 		// Demo worker threads give the scheduler, timer, and printf paths visible activity.
@@ -49,11 +52,14 @@ void kernel_main(uint32_t multiboot_magic, uint32_t multiboot_info_addr) {
 	gdt_init();
 	idt_init();
 	paging_init(multiboot_info_addr);
-	pmm_init(multiboot_info_addr);
+	if (!bootinfo_init(multiboot_magic, multiboot_info_addr))
+		panic("unsupported bootloader handoff (magic=0x%x)", multiboot_magic);
+	pmm_init();
+	paging_finalize_bootstrap();
 	heap_init();
 	if (!input_initialize())
 		panic("failed to initialize input driver");
-	vfs_init(multiboot_info_addr);
+	vfs_init();
 	scheduler_init();
 	if (!timer_initialize(100, scheduler_on_timer_tick))
 		panic("failed to initialize timer driver");

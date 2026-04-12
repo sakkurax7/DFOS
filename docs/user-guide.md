@@ -10,7 +10,6 @@ When DFOS boots successfully, you should see:
 - Memory and paging information
 - The active console, input, timer, and IRQ controller names
 - The same kernel log mirrored into the terminal running QEMU through the serial console
-- Periodic heartbeat lines from worker tasks
 
 ## Starting DFOS
 
@@ -74,6 +73,8 @@ Debugger commands:
 - `mem`: show total and free memory
 - `ls`: list files in the initrd
 - `cat <file>`: print a file from the initrd
+- `test all`: run all built-in subsystem tests
+- `test memmap|vma|slab|aspace`: run one test group
 - `continue`: leave the debugger
 
 Example session:
@@ -139,7 +140,7 @@ DFOS is still early-stage software. Current limits include:
 - No graphical interface
 - No persistent disk filesystem
 - No userspace programs
-- No process isolation
+- No ring-3 execution yet (address-space isolation is now in place for tasks)
 - No login or shell environment
 
 The current experience is best thought of as "boot the kernel, inspect it, and test subsystems."
