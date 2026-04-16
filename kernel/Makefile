@@ -41,6 +41,7 @@ kernel/paging.o \
 kernel/panic.o \
 kernel/pmm.o \
 kernel/scheduler.o \
+kernel/sync.o \
 kernel/stack_protector.o \
 kernel/timer.o \
 kernel/vma.o \

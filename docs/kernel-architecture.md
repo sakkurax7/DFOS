@@ -159,13 +159,19 @@ This now backs live on-demand page-table growth and general physical memory owne
 
 [`../kernel/kernel/scheduler.c`](../kernel/kernel/scheduler.c) implements kernel thread scheduling:
 
-- Fixed task table
-- One kernel stack per task
-- Timer-driven round-robin preemption through the generic timer service
-- Software-interrupt yield path
-- Tick-based sleep queue
+- Fixed-size thread table with explicit thread lists (free, runnable, sleeping, zombie)
+- Per-CPU run queues with strict priority classes
+- NUMA-aware task placement policy (preferred node + CPU affinity mask)
+- Priority-aware preemption through timer ticks and software-interrupt yield
+- Tick-based sleeping and wake-up management
+- Extended task-creation API for priority and placement hints
 
 Tasks now own separate paging spaces and the scheduler switches `CR3` during context switches. Execution is still kernel-mode only.
+
+Current implementation notes:
+
+- The scheduling policy is NUMA-aware and SMP-ready, but current i386 bring-up only runs CPU 0.
+- The scheduler includes built-in self-tests for thread-list ordering, priority dispatch, and NUMA/affinity CPU selection.
 
 ## Input And Debugger
 
@@ -175,10 +181,11 @@ Tasks now own separate paging spaces and the scheduler switches `CR3` during con
 
 - `help`
 - `tasks`
+- `cpus`
 - `mem`
 - `ls`
 - `cat <file>`
-- `test [all|memmap|vma|slab|aspace]`
+- `test [all|memmap|vma|slab|aspace|sched|sync]`
 - `continue`
 
 ## Initrd And Filesystem

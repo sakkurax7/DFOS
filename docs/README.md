@@ -7,6 +7,7 @@ Use these guides as the main navigation for the project:
 - [Kernel Developer Guide](./developer-kernel-guide.md) for implementation notes, extension guidance, and how to add new hardware modules.
 - [Application Developer Guide](./application-developer-guide.md) for what "applications" mean in the current system.
 - [User Guide](./user-guide.md) for running DFOS, using the debugger, and troubleshooting boots.
+- [TODO And Roadmap](./todo.md) for the milestone checklist to reach userland and self-hosting.
 
 Useful source tree anchors:
 
