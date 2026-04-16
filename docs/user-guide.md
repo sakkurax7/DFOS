@@ -50,7 +50,7 @@ At boot DFOS:
 - Starts a few background kernel tasks
 - Loads files from the initrd
 
-The worker tasks print heartbeat messages so you can tell the scheduler is alive.
+The scheduler is now priority-based and topology-aware, and tasks can be inspected from the debugger.
 
 ## Serial Console
 
@@ -69,12 +69,13 @@ Press `F1` to enter the built-in kernel debugger.
 Debugger commands:
 
 - `help`: show available commands
-- `tasks`: show kernel task state
+- `tasks`: show kernel task state, priority, affinity, and placement
+- `cpus`: show per-CPU runnable state and scheduler list counts
 - `mem`: show total and free memory
 - `ls`: list files in the initrd
 - `cat <file>`: print a file from the initrd
 - `test all`: run all built-in subsystem tests
-- `test memmap|vma|slab|aspace`: run one test group
+- `test memmap|vma|slab|aspace|sched|sync`: run one test group
 - `continue`: leave the debugger
 
 Example session:
@@ -142,5 +143,7 @@ DFOS is still early-stage software. Current limits include:
 - No userspace programs
 - No ring-3 execution yet (address-space isolation is now in place for tasks)
 - No login or shell environment
+- Scheduler policy is NUMA-aware, but only CPU 0 is active today on i386
+- No cross-CPU IPIs or NUMA-aware physical page allocator yet
 
 The current experience is best thought of as "boot the kernel, inspect it, and test subsystems."

@@ -221,14 +221,22 @@ See [`../kernel/kernel/scheduler.c`](../kernel/kernel/scheduler.c).
 
 Current thread model:
 
-- Fixed-size task table
+- Fixed-size thread table with explicit thread lists (`free`, `runnable`, `sleeping`, `zombie`)
 - One kernel stack per task
 - Scheduler-maintained TSS `esp0` updates on task switches
-- Round-robin scheduling
-- Tick-based sleeping
+- Per-CPU run queues split by priority
+- NUMA-aware task placement (`preferred_numa_node`) with CPU affinity masks
 - Cooperative yield via `int $48`
-- Preemptive time slicing through the active timer driver
+- Priority-based preemptive time slicing through the active timer driver
 - `CR3` switching to each task's owned paging space on context switches
+
+Scheduler API surface intended for kernel services:
+
+- Simple create path: `scheduler_create_kernel_task`
+- Extended create path: `scheduler_create_kernel_task_ex` + `scheduler_task_config_t`
+- Dynamic priority changes: `scheduler_set_task_priority`
+- Topology config hooks: `scheduler_topology_default` and `scheduler_configure_topology`
+- Introspection hooks: `scheduler_get_task_snapshot`, `scheduler_get_cpu_snapshot`, `scheduler_get_list_snapshot`
 
 When creating new kernel services:
 
@@ -241,6 +249,8 @@ Current limits:
 - There are no mutexes, semaphores, condition variables, or wait queues yet
 - Tasks still run in ring 0
 - Zombie tasks are not reaped yet
+- Only CPU 0 is active today on i386 bring-up (policy is SMP/NUMA-aware, execution is not yet multi-core)
+- No remote wake-up IPIs, cross-CPU load balancer daemon, or NUMA memory allocator yet
 
 ## Platform Services, Debug, And Files
 
@@ -287,12 +297,19 @@ The debugger is a regular kernel thread, not a special stop-the-world monitor. T
 - It does not halt every other thread automatically
 - Output from other tasks may interleave unless you later add console locking
 
+Useful scheduler inspection commands:
+
+- `tasks` for per-thread state, priority, affinity, and placement
+- `cpus` for per-CPU runnable depth and global scheduler list counts
+
 Relevant memory-management test commands:
 
 - `test memmap`
 - `test vma`
 - `test slab`
 - `test aspace`
+- `test sched`
+- `test sync`
 - `test all`
 
 ### Initrd And VFS

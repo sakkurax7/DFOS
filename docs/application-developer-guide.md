@@ -24,6 +24,8 @@ This guide explains what is currently possible and how to prepare for the future
 The easiest way to prototype application logic today is to add a kernel task with:
 
 - `scheduler_create_kernel_task`
+- `scheduler_create_kernel_task_ex`
+- `scheduler_task_config_default`
 - `printf`
 - `scheduler_sleep`
 - `vfs_open` and `vfs_read`
@@ -59,6 +61,8 @@ Current developer-usable facilities inside DFOS:
 
 - Console output through `printf`
 - Tick-based sleeping through `scheduler_sleep`
+- Cooperative hand-off through `scheduler_yield`
+- Priority and placement hints through `scheduler_task_config_t`
 - Access to initrd-backed files through the VFS
 - Keyboard-driven debugger entry with `F1`
 
@@ -95,6 +99,25 @@ Important:
 - Returning from a task exits it
 - Tasks share the whole kernel address space
 - Bugs in task code can crash the entire OS
+
+### Picking Priority And Placement
+
+For services that need explicit scheduling hints, use the extended create API:
+
+```c
+scheduler_task_config_t config;
+scheduler_task_config_default(&config);
+config.priority = SCHEDULER_PRIORITY_HIGH;
+config.cpu_affinity_mask = 1u << 0;
+config.preferred_numa_node = SCHEDULER_NUMA_NODE_ANY;
+
+scheduler_create_kernel_task_ex("net", net_task, NULL, &config);
+```
+
+Notes:
+
+- Lower enum values are higher priority (`REALTIME` is highest)
+- Affinity and NUMA preferences are policy hints; current i386 runtime only executes on CPU 0
 
 ## File Access Model
 

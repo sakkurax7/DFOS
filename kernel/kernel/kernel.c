@@ -86,8 +86,17 @@ void kernel_main(uint32_t multiboot_magic, uint32_t multiboot_info_addr) {
 		(unsigned) module_registered_count(MODULE_KIND_IRQ_CONTROLLER));
 	printf("debug hotkey: F1\n");
 
-	scheduler_create_kernel_task("worker-a", worker_task, "worker-a");
-	scheduler_create_kernel_task("worker-b", worker_task, "worker-b");
+	scheduler_task_config_t worker_a_config;
+	scheduler_task_config_default(&worker_a_config);
+	worker_a_config.priority = SCHEDULER_PRIORITY_HIGH;
+	if (!scheduler_create_kernel_task_ex("worker-a", worker_task, "worker-a", &worker_a_config))
+		panic("failed to create worker-a");
+
+	scheduler_task_config_t worker_b_config;
+	scheduler_task_config_default(&worker_b_config);
+	worker_b_config.priority = SCHEDULER_PRIORITY_LOW;
+	if (!scheduler_create_kernel_task_ex("worker-b", worker_task, "worker-b", &worker_b_config))
+		panic("failed to create worker-b");
 
 	printf("interrupts online, scheduler started\n");
 	interrupts_enable();
