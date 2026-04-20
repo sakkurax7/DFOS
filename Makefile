@@ -34,7 +34,7 @@ check:
 		kernel/kernel/module.c \
 		kernel/kernel/paging.c kernel/kernel/panic.c kernel/kernel/pmm.c \
 		kernel/kernel/scheduler.c kernel/kernel/stack_protector.c \
-		kernel/kernel/sync.c \
+		kernel/kernel/sync.c kernel/kernel/test.c \
 		kernel/kernel/timer.c kernel/kernel/vma.c kernel/kernel/vfs.c \
 		kernel/arch/i386/cpu.c kernel/arch/i386/gdt.c kernel/arch/i386/interrupts.c \
 		kernel/arch/i386/pic.c kernel/arch/i386/pit_timer.c \

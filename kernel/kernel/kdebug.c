@@ -10,15 +10,20 @@
 #include <kernel/input.h>
 #include <kernel/kdebug.h>
 #include <kernel/paging.h>
+#include <kernel/panic.h>
 #include <kernel/pmm.h>
 #include <kernel/scheduler.h>
 #include <kernel/sync.h>
-#include <kernel/vma.h>
+#include <kernel/test.h>
 #include <kernel/vfs.h>
+#include <kernel/vma.h>
+#include <kernel/x86.h>
 
 #define KDEBUG_LINE_MAX 128
+#define X86_EFLAGS_INTERRUPT_FLAG (1u << 9)
 
 static bool debugger_active;
+static bool tests_registered;
 
 typedef struct kdebug_sync_counter_ctx {
 	kspinlock_t lock;
@@ -35,6 +40,46 @@ typedef struct kdebug_sync_condition_ctx {
 	volatile bool waiter_woke;
 	volatile bool waiter_timed_out;
 } kdebug_sync_condition_ctx_t;
+
+typedef struct kdebug_mutex_counter_ctx {
+	kmutex_t mutex;
+	volatile uint32_t counter;
+	volatile uint32_t done_workers;
+	uint32_t iterations_per_worker;
+} kdebug_mutex_counter_ctx_t;
+
+typedef struct kdebug_mutex_timeout_ctx {
+	kmutex_t mutex;
+	volatile bool worker_done;
+	volatile bool worker_acquired;
+	volatile bool worker_timed_out;
+} kdebug_mutex_timeout_ctx_t;
+
+typedef struct kdebug_lifetime_object {
+	kobject_t object;
+	volatile uint32_t* release_counter;
+} kdebug_lifetime_object_t;
+
+static bool starts_with(const char* text, const char* prefix) {
+	return strncmp(text, prefix, strlen(prefix)) == 0;
+}
+
+static void kdebug_stats_add(ktest_stats_t* stats, uint32_t checks, uint32_t failures) {
+	if (stats == NULL)
+		return;
+
+	stats->checks += checks;
+	stats->failures += failures;
+}
+
+static bool kdebug_record_subtest(ktest_stats_t* stats, bool pass) {
+	ktest_stats_record(stats, pass);
+	return pass;
+}
+
+static void kdebug_print_prompt(void) {
+	printf("\n[kdebug] ");
+}
 
 static void kdebug_sync_counter_task(void* arg) {
 	kdebug_sync_counter_ctx_t* context = (kdebug_sync_counter_ctx_t*) arg;
@@ -79,12 +124,32 @@ static void kdebug_sync_signaler_task(void* arg) {
 	kspin_unlock(&context->lock);
 }
 
-static void kdebug_print_prompt(void) {
-	printf("\n[kdebug] ");
+static void kdebug_mutex_counter_task(void* arg) {
+	kdebug_mutex_counter_ctx_t* context = (kdebug_mutex_counter_ctx_t*) arg;
+
+	for (uint32_t i = 0; i < context->iterations_per_worker; i++) {
+		kmutex_lock(&context->mutex);
+		context->counter++;
+		kmutex_unlock(&context->mutex);
+
+		if ((i & 31u) == 0u)
+			scheduler_yield();
+	}
+
+	kmutex_lock(&context->mutex);
+	context->done_workers++;
+	kmutex_unlock(&context->mutex);
 }
 
-static bool starts_with(const char* text, const char* prefix) {
-	return strncmp(text, prefix, strlen(prefix)) == 0;
+static void kdebug_mutex_timeout_task(void* arg) {
+	kdebug_mutex_timeout_ctx_t* context = (kdebug_mutex_timeout_ctx_t*) arg;
+
+	const bool acquired = kmutex_lock_timeout(&context->mutex, 5u);
+	context->worker_acquired = acquired;
+	context->worker_timed_out = !acquired;
+	if (acquired)
+		kmutex_unlock(&context->mutex);
+	context->worker_done = true;
 }
 
 static void kdebug_show_tasks(void) {
@@ -144,9 +209,10 @@ static void kdebug_cat_file(const char* path) {
 		putchar('\n');
 }
 
-static bool kdebug_test_memmap(void) {
+static bool kdebug_test_memmap(ktest_stats_t* stats) {
 	if (!bootinfo_has_memory_map()) {
 		printf("memmap: bootloader did not provide a memory map\n");
+		ktest_stats_record(stats, false);
 		return false;
 	}
 
@@ -163,12 +229,13 @@ static bool kdebug_test_memmap(void) {
 	}
 
 	const bool pass = entries > 0 && available_bytes > 0;
-	printf("memmap: entries=%u available=%u MiB -> %s\n",
-		entries, (uint32_t) (available_bytes >> 20), pass ? "PASS" : "FAIL");
+	printf("memmap: entries=%u available=%u MiB\n",
+		entries, (uint32_t) (available_bytes >> 20));
+	ktest_stats_record(stats, pass);
 	return pass;
 }
 
-static bool kdebug_test_vma_tree(void) {
+static bool kdebug_test_vma_tree(ktest_stats_t* stats) {
 	vma_tree_t tree;
 	vma_tree_init(&tree);
 
@@ -189,15 +256,27 @@ static bool kdebug_test_vma_tree(void) {
 	pass = pass && vma_tree_remove(&tree, 0x5000u, 0x7000u);
 
 	vma_tree_clear(&tree);
-	printf("vma: AVL insert/find/remove/gap checks -> %s\n", pass ? "PASS" : "FAIL");
+	printf("vma: gap=%u start=0x%x end=0x%x flags=0x%x\n", gap, start, end, flags);
+	ktest_stats_record(stats, pass);
 	return pass;
 }
 
-static bool kdebug_test_slab(void) {
+static bool kdebug_test_slab(ktest_stats_t* stats) {
 	void* a = kmalloc(24);
 	void* b = kmalloc(96);
 	void* c = kmalloc(1600);
 	void* d = kmalloc(5000);
+
+	const bool allocated = a != NULL && b != NULL && c != NULL && d != NULL;
+	if (!allocated) {
+		printf("slab: allocation failed a=%p b=%p c=%p d=%p\n", a, b, c, d);
+		kfree(d);
+		kfree(c);
+		kfree(b);
+		kfree(a);
+		ktest_stats_record(stats, false);
+		return false;
+	}
 
 	memset(a, 0xA5, 24);
 	memset(b, 0x5A, 96);
@@ -209,11 +288,12 @@ static bool kdebug_test_slab(void) {
 	kfree(b);
 	kfree(a);
 
-	printf("slab: mixed-size alloc/free cycle -> PASS\n");
+	printf("slab: mixed-size alloc/free cycle complete\n");
+	ktest_stats_record(stats, true);
 	return true;
 }
 
-static bool kdebug_test_address_spaces(void) {
+static bool kdebug_test_address_spaces(ktest_stats_t* stats) {
 	const uint32_t test_virtual = PAGING_USER_BASE + PAGE_SIZE;
 	paging_space_t* space_a = paging_create_process_space();
 	paging_space_t* space_b = paging_create_process_space();
@@ -251,6 +331,8 @@ static bool kdebug_test_address_spaces(void) {
 	pass = pass && resolved_b == frame_b;
 	pass = pass && resolved_a != resolved_b;
 
+	printf("aspace: resolved_a=0x%x resolved_b=0x%x\n", resolved_a, resolved_b);
+
 cleanup:
 	if (space_a != NULL)
 		paging_unmap_user_page(space_a, (void*) (uintptr_t) test_virtual);
@@ -265,23 +347,18 @@ cleanup:
 	if (space_b != NULL)
 		paging_destroy_process_space(space_b);
 
-	printf("aspace: per-process mapping isolation -> %s\n", pass ? "PASS" : "FAIL");
+	ktest_stats_record(stats, pass);
 	return pass;
 }
 
-static bool kdebug_test_scheduler(void) {
+static bool kdebug_test_scheduler(ktest_stats_t* stats) {
 	scheduler_self_test_report_t report;
 	const bool pass = scheduler_run_self_tests(&report);
 
-	printf("sched: checks=%u failures=%u -> %s\n",
-		report.checks, report.failures, pass ? "PASS" : "FAIL");
+	kdebug_stats_add(stats, report.checks, report.failures);
+	printf("sched: checks=%u failures=%u\n", report.checks, report.failures);
 	return pass;
 }
-
-typedef struct kdebug_lifetime_object {
-	kobject_t object;
-	volatile uint32_t* release_counter;
-} kdebug_lifetime_object_t;
 
 static void kdebug_lifetime_release(kobject_t* object) {
 	kdebug_lifetime_object_t* typed = (kdebug_lifetime_object_t*) object;
@@ -312,8 +389,30 @@ static bool kdebug_test_sync_locking(void) {
 	pass = pass && context.done_workers == 2u;
 	pass = pass && context.counter == expected;
 
-	printf("sync-lock: done=%u counter=%u expected=%u -> %s\n",
-		context.done_workers, context.counter, expected, pass ? "PASS" : "FAIL");
+	printf("sync-lock: done=%u counter=%u expected=%u\n",
+		context.done_workers, context.counter, expected);
+	return pass;
+}
+
+static bool kdebug_test_irqsave_spinlock(void) {
+	kspinlock_t lock;
+	kspinlock_init(&lock);
+
+	const uint32_t before_flags = x86_read_eflags();
+	const kirq_state_t irq_state = kspin_lock_irqsave(&lock);
+	const uint32_t inside_flags = x86_read_eflags();
+	kspin_unlock_irqrestore(&lock, irq_state);
+	const uint32_t after_flags = x86_read_eflags();
+
+	const bool before_enabled = (before_flags & X86_EFLAGS_INTERRUPT_FLAG) != 0;
+	const bool inside_enabled = (inside_flags & X86_EFLAGS_INTERRUPT_FLAG) != 0;
+	const bool after_enabled = (after_flags & X86_EFLAGS_INTERRUPT_FLAG) != 0;
+
+	const bool pass = !inside_enabled && (after_enabled == before_enabled);
+	printf("sync-irq: before=%s inside=%s after=%s\n",
+		before_enabled ? "on" : "off",
+		inside_enabled ? "on" : "off",
+		after_enabled ? "on" : "off");
 	return pass;
 }
 
@@ -326,8 +425,7 @@ static bool kdebug_test_wait_queue_timeout(void) {
 	const uint32_t elapsed = scheduler_ticks() - start_tick;
 	const bool pass = !woke && elapsed >= 3u;
 
-	printf("sync-wait-timeout: woke=%s elapsed=%u -> %s\n",
-		woke ? "yes" : "no", elapsed, pass ? "PASS" : "FAIL");
+	printf("sync-wait-timeout: woke=%s elapsed=%u\n", woke ? "yes" : "no", elapsed);
 	return pass;
 }
 
@@ -357,11 +455,71 @@ static bool kdebug_test_wait_queue_wake(void) {
 	pass = pass && context.waiter_woke;
 	pass = pass && !context.waiter_timed_out;
 
-	printf("sync-wait-wake: done=%s woke=%s timed_out=%s -> %s\n",
+	printf("sync-wait-wake: done=%s woke=%s timed_out=%s\n",
 		context.waiter_done ? "yes" : "no",
 		context.waiter_woke ? "yes" : "no",
-		context.waiter_timed_out ? "yes" : "no",
-		pass ? "PASS" : "FAIL");
+		context.waiter_timed_out ? "yes" : "no");
+	return pass;
+}
+
+static bool kdebug_test_mutex_locking(void) {
+	kdebug_mutex_counter_ctx_t context;
+	kmutex_init(&context.mutex);
+	context.counter = 0;
+	context.done_workers = 0;
+	context.iterations_per_worker = 400u;
+
+	bool pass = true;
+	pass = pass && scheduler_create_kernel_task("sync-mutex-a", kdebug_mutex_counter_task, &context);
+	pass = pass && scheduler_create_kernel_task("sync-mutex-b", kdebug_mutex_counter_task, &context);
+	if (!pass) {
+		printf("sync-mutex: failed to create worker tasks\n");
+		return false;
+	}
+
+	const uint32_t start_tick = scheduler_ticks();
+	const uint32_t timeout_ticks = 400u;
+	while (context.done_workers < 2u && (scheduler_ticks() - start_tick) < timeout_ticks)
+		scheduler_sleep(1u);
+
+	const uint32_t expected = context.iterations_per_worker * 2u;
+	pass = pass && context.done_workers == 2u;
+	pass = pass && context.counter == expected;
+
+	printf("sync-mutex: done=%u counter=%u expected=%u\n",
+		context.done_workers, context.counter, expected);
+	return pass;
+}
+
+static bool kdebug_test_mutex_timeout(void) {
+	kdebug_mutex_timeout_ctx_t context;
+	kmutex_init(&context.mutex);
+	context.worker_done = false;
+	context.worker_acquired = false;
+	context.worker_timed_out = false;
+
+	kmutex_lock(&context.mutex);
+	bool pass = scheduler_create_kernel_task("sync-mutex-timeout", kdebug_mutex_timeout_task, &context);
+	if (!pass) {
+		kmutex_unlock(&context.mutex);
+		printf("sync-mutex-timeout: failed to create worker task\n");
+		return false;
+	}
+
+	const uint32_t start_tick = scheduler_ticks();
+	const uint32_t timeout_ticks = 100u;
+	while (!context.worker_done && (scheduler_ticks() - start_tick) < timeout_ticks)
+		scheduler_sleep(1u);
+	kmutex_unlock(&context.mutex);
+
+	pass = pass && context.worker_done;
+	pass = pass && !context.worker_acquired;
+	pass = pass && context.worker_timed_out;
+
+	printf("sync-mutex-timeout: done=%s acquired=%s timed_out=%s\n",
+		context.worker_done ? "yes" : "no",
+		context.worker_acquired ? "yes" : "no",
+		context.worker_timed_out ? "yes" : "no");
 	return pass;
 }
 
@@ -399,70 +557,120 @@ static bool kdebug_test_lifetime_model(void) {
 	pass = pass && kref_put(&refcount);
 
 	kfree(object);
-	printf("lifetime: release_count=%u -> %s\n",
-		(uint32_t) release_counter, pass ? "PASS" : "FAIL");
+	printf("lifetime: release_count=%u\n", (uint32_t) release_counter);
 	return pass;
 }
 
-static bool kdebug_test_sync_primitives(void) {
+static bool kdebug_test_sync_primitives(ktest_stats_t* stats) {
 	bool pass = true;
 
-	pass = kdebug_test_sync_locking() && pass;
-	pass = kdebug_test_wait_queue_timeout() && pass;
-	pass = kdebug_test_wait_queue_wake() && pass;
-	pass = kdebug_test_lifetime_model() && pass;
-
-	printf("sync: primitive suite -> %s\n", pass ? "PASS" : "FAIL");
+	pass = kdebug_record_subtest(stats, kdebug_test_sync_locking()) && pass;
+	pass = kdebug_record_subtest(stats, kdebug_test_irqsave_spinlock()) && pass;
+	pass = kdebug_record_subtest(stats, kdebug_test_wait_queue_timeout()) && pass;
+	pass = kdebug_record_subtest(stats, kdebug_test_wait_queue_wake()) && pass;
+	pass = kdebug_record_subtest(stats, kdebug_test_mutex_locking()) && pass;
+	pass = kdebug_record_subtest(stats, kdebug_test_mutex_timeout()) && pass;
+	pass = kdebug_record_subtest(stats, kdebug_test_lifetime_model()) && pass;
 	return pass;
 }
 
-static void kdebug_run_tests(const char* selector) {
-	bool run_all = selector == NULL || selector[0] == '\0' || strcmp(selector, "all") == 0;
+static bool kdebug_test_panic_log(ktest_stats_t* stats) {
+	panic_log_capture("panic-log-self-test run=%u", 1u);
+	panic_log_capture("panic-log-self-test run=%u", 2u);
+
+	panic_record_t newest = { 0 };
+	panic_record_t older = { 0 };
 	bool pass = true;
-	uint32_t executed = 0;
-
-	if (run_all || strcmp(selector, "memmap") == 0) {
-		pass = kdebug_test_memmap() && pass;
-		executed++;
+	pass = pass && panic_log_count() >= 2u;
+	pass = pass && panic_log_read(0u, &newest);
+	pass = pass && panic_log_read(1u, &older);
+	if (pass) {
+		pass = pass && newest.sequence > older.sequence;
+		pass = pass && strcmp(newest.message, "panic-log-self-test run=2") == 0;
+		pass = pass && strcmp(older.message, "panic-log-self-test run=1") == 0;
 	}
 
-	if (run_all || strcmp(selector, "vma") == 0) {
-		pass = kdebug_test_vma_tree() && pass;
-		executed++;
-	}
+	printf("panic: records=%u newest_seq=%u\n", panic_log_count(), newest.sequence);
+	ktest_stats_record(stats, pass);
+	return pass;
+}
 
-	if (run_all || strcmp(selector, "slab") == 0) {
-		pass = kdebug_test_slab() && pass;
-		executed++;
-	}
-
-	if (run_all || strcmp(selector, "aspace") == 0) {
-		pass = kdebug_test_address_spaces() && pass;
-		executed++;
-	}
-
-	if (run_all || strcmp(selector, "sched") == 0) {
-		pass = kdebug_test_scheduler() && pass;
-		executed++;
-	}
-
-	if (run_all || strcmp(selector, "sync") == 0) {
-		pass = kdebug_test_sync_primitives() && pass;
-		executed++;
-	}
-
-	if (executed == 0) {
-		printf("tests: unknown selector '%s' (use memmap, vma, slab, aspace, sched, sync, all)\n",
-			selector);
+static void kdebug_show_panic_log(void) {
+	const uint32_t count = panic_log_count();
+	if (count == 0) {
+		printf("paniclog: empty\n");
 		return;
 	}
 
-	printf("tests: %u executed -> %s\n", executed, pass ? "PASS" : "FAIL");
+	for (uint32_t i = 0; i < count; i++) {
+		panic_record_t record;
+		if (!panic_log_read(i, &record))
+			continue;
+
+		printf("paniclog[%u]: seq=%u tick=%u task=%u(%s)%s\n",
+			i, record.sequence, record.tick, record.task_id, record.task_name,
+			record.truncated ? " [truncated]" : "");
+		printf("  %s\n", record.message);
+	}
+}
+
+static void kdebug_test_reporter(const char* name, const ktest_stats_t* stats,
+	bool pass, void* context) {
+	(void) context;
+	printf("test:%-8s checks=%u failures=%u -> %s\n",
+		name, stats->checks, stats->failures, pass ? "PASS" : "FAIL");
+}
+
+static void kdebug_print_test_selectors(void) {
+	const uint32_t count = ktest_registered_count();
+	if (count == 0) {
+		printf("tests: no registered subsystems\n");
+		return;
+	}
+
+	printf("tests: all");
+	for (uint32_t i = 0; i < count; i++)
+		printf(", %s", ktest_registered_name(i));
+	putchar('\n');
+}
+
+static void kdebug_run_tests(const char* selector) {
+	ktest_run_summary_t summary;
+	if (!ktest_run(selector, &summary, kdebug_test_reporter, NULL)) {
+		printf("tests: unknown selector '%s'\n", selector != NULL ? selector : "");
+		kdebug_print_test_selectors();
+		return;
+	}
+
+	const bool pass = summary.failed == 0;
+	printf("tests: suites=%u passed=%u failed=%u checks=%u check_failures=%u -> %s\n",
+		summary.executed, summary.passed, summary.failed,
+		summary.checks, summary.check_failures,
+		pass ? "PASS" : "FAIL");
+}
+
+static void kdebug_register_test_hook(const char* name, ktest_hook_t hook) {
+	if (!ktest_register_subsystem(name, hook))
+		printf("kdebug: failed to register test hook '%s'\n", name);
+}
+
+static void kdebug_register_tests(void) {
+	if (tests_registered)
+		return;
+
+	kdebug_register_test_hook("memmap", kdebug_test_memmap);
+	kdebug_register_test_hook("vma", kdebug_test_vma_tree);
+	kdebug_register_test_hook("slab", kdebug_test_slab);
+	kdebug_register_test_hook("aspace", kdebug_test_address_spaces);
+	kdebug_register_test_hook("sched", kdebug_test_scheduler);
+	kdebug_register_test_hook("sync", kdebug_test_sync_primitives);
+	kdebug_register_test_hook("panic", kdebug_test_panic_log);
+	tests_registered = true;
 }
 
 static void kdebug_execute(char* line) {
 	if (strcmp(line, "help") == 0) {
-		printf("commands: help, tasks, cpus, mem, ls, cat <file>, test [all|memmap|vma|slab|aspace|sched|sync], continue\n");
+		printf("commands: help, tasks, cpus, mem, ls, cat <file>, test [all|<subsystem>|list], paniclog [clear], continue\n");
 	} else if (strcmp(line, "tasks") == 0) {
 		kdebug_show_tasks();
 	} else if (strcmp(line, "cpus") == 0) {
@@ -476,8 +684,15 @@ static void kdebug_execute(char* line) {
 		kdebug_cat_file(line + 4);
 	} else if (strcmp(line, "test") == 0) {
 		kdebug_run_tests("all");
+	} else if (strcmp(line, "test list") == 0) {
+		kdebug_print_test_selectors();
 	} else if (starts_with(line, "test ")) {
 		kdebug_run_tests(line + 5);
+	} else if (strcmp(line, "paniclog") == 0) {
+		kdebug_show_panic_log();
+	} else if (strcmp(line, "paniclog clear") == 0) {
+		panic_log_clear();
+		printf("paniclog: cleared\n");
 	} else if (strcmp(line, "continue") == 0) {
 		debugger_active = false;
 		printf("leaving debugger\n");
@@ -543,6 +758,7 @@ static void kdebug_task(void* arg) {
 }
 
 void kdebug_init(void) {
+	kdebug_register_tests();
 	debugger_active = false;
 	scheduler_create_kernel_task("kdebug", kdebug_task, NULL);
 }

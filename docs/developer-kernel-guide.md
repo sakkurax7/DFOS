@@ -246,7 +246,8 @@ When creating new kernel services:
 
 Current limits:
 
-- There are no mutexes, semaphores, condition variables, or wait queues yet
+- Synchronization now includes spinlocks, IRQ-save spinlock helpers, wait queues, condition waits, and sleepable mutexes
+- Semaphores are still not implemented
 - Tasks still run in ring 0
 - Zombie tasks are not reaped yet
 - Only CPU 0 is active today on i386 bring-up (policy is SMP/NUMA-aware, execution is not yet multi-core)
@@ -310,7 +311,14 @@ Relevant memory-management test commands:
 - `test aspace`
 - `test sched`
 - `test sync`
+- `test panic`
 - `test all`
+- `test list`
+
+Crash-report inspection commands:
+
+- `paniclog`
+- `paniclog clear`
 
 ### Initrd And VFS
 

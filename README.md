@@ -87,7 +87,8 @@ sh ./scripts/macos-toolchain.sh install
 - The current i386 platform wires a VGA text console, a COM1 serial console, a PS/2 keyboard, an 8259 PIC, and an 8253/8254 PIT into the generic kernel interfaces through [`kernel/arch/i386/platform.c`](kernel/arch/i386/platform.c).
 - Hardware backends are selected through a small static module registry in [`kernel/include/kernel/module.h`](kernel/include/kernel/module.h), which gives future APIC, HPET, or storage-controller work one shared activation pattern.
 - Press `F1` at runtime to enter the internal kernel debugger.
-- In the debugger, run `test all` (or `test memmap|vma|slab|aspace|sched|sync`) for quick subsystem checks.
+- In the debugger, run `test all` (or `test list` and then `test <subsystem>`) for quick subsystem checks with uniform PASS/FAIL reporting.
+- Use `paniclog` to inspect captured crash reports, and `paniclog clear` to reset the in-memory panic history.
 - Current open scheduler issue: i386 bring-up still runs only CPU 0, so policy is SMP/NUMA-aware before full multi-core execution support lands.
 
 ## Documentation
