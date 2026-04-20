@@ -12,6 +12,8 @@ typedef struct kspinlock {
 	volatile uint32_t value;
 } kspinlock_t;
 
+typedef uint32_t kirq_state_t;
+
 typedef struct kwait_queue {
 	volatile uint32_t waiter_count;
 } kwait_queue_t;
@@ -30,9 +32,18 @@ typedef struct kobject {
 	void (*release)(struct kobject* object);
 } kobject_t;
 
+typedef struct kmutex {
+	kspinlock_t lock;
+	kcondition_t condition;
+	volatile bool locked;
+	volatile uint32_t owner_task_id;
+} kmutex_t;
+
 void kspinlock_init(kspinlock_t* lock);
 void kspin_lock(kspinlock_t* lock);
 void kspin_unlock(kspinlock_t* lock);
+kirq_state_t kspin_lock_irqsave(kspinlock_t* lock);
+void kspin_unlock_irqrestore(kspinlock_t* lock, kirq_state_t irq_state);
 
 void kwait_queue_init(kwait_queue_t* queue);
 bool kwait_wait(kwait_queue_t* queue, uint32_t timeout_ticks);
@@ -54,5 +65,13 @@ void kobject_init(kobject_t* object, void (*release)(kobject_t* object));
 void kobject_get(kobject_t* object);
 void kobject_put(kobject_t* object);
 uint32_t kobject_refcount(const kobject_t* object);
+
+void kmutex_init(kmutex_t* mutex);
+bool kmutex_try_lock(kmutex_t* mutex);
+void kmutex_lock(kmutex_t* mutex);
+bool kmutex_lock_timeout(kmutex_t* mutex, uint32_t timeout_ticks);
+void kmutex_unlock(kmutex_t* mutex);
+bool kmutex_is_locked(const kmutex_t* mutex);
+uint32_t kmutex_owner_task(const kmutex_t* mutex);
 
 #endif

@@ -15,12 +15,12 @@ This is the working checklist from current DFOS status to:
 
 ## Phase 0: Foundations And Reliability
 
-- [ ] Add kernel locking primitives (spinlock, IRQ-safe lock, sleepable mutex).
+- [x] Add kernel locking primitives (spinlock, IRQ-safe lock, sleepable mutex).
 - [x] Add wait queues / condition wait primitives.
 - [x] Add kernel object lifetime model (reference counting where needed).
-- [ ] Add per-subsystem test harness hooks and uniform PASS/FAIL reporting.
+- [x] Add per-subsystem test harness hooks and uniform PASS/FAIL reporting.
 - [x] Expand debugger tests to cover scheduler edge-cases and memory stress.
-- [ ] Add a persistent panic log or crash report capture path.
+- [x] Add a persistent panic log or crash report capture path.
 
 ## Phase 1: Real Multiprocessing And Scheduling Maturity
 

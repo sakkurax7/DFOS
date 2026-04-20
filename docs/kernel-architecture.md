@@ -185,7 +185,8 @@ Current implementation notes:
 - `mem`
 - `ls`
 - `cat <file>`
-- `test [all|memmap|vma|slab|aspace|sched|sync]`
+- `test [all|<subsystem>|list]`
+- `paniclog [clear]`
 - `continue`
 
 ## Initrd And Filesystem
@@ -207,4 +208,4 @@ The current platform exposes two console backends through the generic console la
 
 With the default QEMU launchers, serial output is visible in the host terminal because they already use `-serial stdio`.
 
-[`../kernel/kernel/panic.c`](../kernel/kernel/panic.c) now goes through the generic console and CPU interfaces, which keeps the panic path portable across future hardware backends.
+[`../kernel/kernel/panic.c`](../kernel/kernel/panic.c) now goes through the generic console and CPU interfaces, captures structured crash metadata (tick/task/message), and keeps a persistent in-memory panic history that the debugger can inspect with `paniclog`.

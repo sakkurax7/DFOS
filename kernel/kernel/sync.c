@@ -6,6 +6,9 @@
 #include <kernel/panic.h>
 #include <kernel/scheduler.h>
 #include <kernel/sync.h>
+#include <kernel/x86.h>
+
+#define X86_EFLAGS_INTERRUPT_FLAG (1u << 9)
 
 static uint32_t atomic_xadd_u32(volatile uint32_t* target, int32_t delta) {
 	int32_t previous = delta;
@@ -33,6 +36,17 @@ static bool atomic_try_lock_u32(volatile uint32_t* target) {
 	return desired == 0;
 }
 
+static uint32_t irq_save(void) {
+	const uint32_t flags = x86_read_eflags();
+	x86_cli();
+	return flags;
+}
+
+static void irq_restore(uint32_t flags) {
+	if ((flags & X86_EFLAGS_INTERRUPT_FLAG) != 0)
+		x86_sti();
+}
+
 void kspinlock_init(kspinlock_t* lock) {
 	if (lock == NULL)
 		return;
@@ -58,6 +72,17 @@ void kspin_unlock(kspinlock_t* lock) {
 
 	asm volatile("" : : : "memory");
 	lock->value = 0;
+}
+
+kirq_state_t kspin_lock_irqsave(kspinlock_t* lock) {
+	const kirq_state_t irq_state = irq_save();
+	kspin_lock(lock);
+	return irq_state;
+}
+
+void kspin_unlock_irqrestore(kspinlock_t* lock, kirq_state_t irq_state) {
+	kspin_unlock(lock);
+	irq_restore(irq_state);
 }
 
 void kwait_queue_init(kwait_queue_t* queue) {
@@ -204,4 +229,117 @@ uint32_t kobject_refcount(const kobject_t* object) {
 	if (object == NULL)
 		return 0;
 	return kref_read(&object->refcount);
+}
+
+void kmutex_init(kmutex_t* mutex) {
+	if (mutex == NULL)
+		return;
+
+	kspinlock_init(&mutex->lock);
+	kcondition_init(&mutex->condition);
+	mutex->locked = false;
+	mutex->owner_task_id = 0;
+}
+
+bool kmutex_try_lock(kmutex_t* mutex) {
+	if (mutex == NULL)
+		return false;
+
+	const uint32_t current_task_id = scheduler_current_task_id();
+
+	kspin_lock(&mutex->lock);
+	if (mutex->locked) {
+		if (mutex->owner_task_id == current_task_id) {
+			kspin_unlock(&mutex->lock);
+			panic("kmutex_try_lock recursion by task %u", current_task_id);
+		}
+
+		kspin_unlock(&mutex->lock);
+		return false;
+	}
+
+	mutex->locked = true;
+	mutex->owner_task_id = current_task_id;
+	kspin_unlock(&mutex->lock);
+	return true;
+}
+
+void kmutex_lock(kmutex_t* mutex) {
+	if (!kmutex_lock_timeout(mutex, KWAIT_FOREVER))
+		panic("kmutex_lock timed out unexpectedly");
+}
+
+bool kmutex_lock_timeout(kmutex_t* mutex, uint32_t timeout_ticks) {
+	if (mutex == NULL)
+		return false;
+
+	const uint32_t current_task_id = scheduler_current_task_id();
+	const uint32_t start_tick = scheduler_ticks();
+
+	kspin_lock(&mutex->lock);
+
+	while (mutex->locked) {
+		if (mutex->owner_task_id == current_task_id) {
+			kspin_unlock(&mutex->lock);
+			panic("kmutex_lock recursion by task %u", current_task_id);
+		}
+
+		uint32_t wait_ticks = KWAIT_FOREVER;
+		if (timeout_ticks != KWAIT_FOREVER) {
+			const uint32_t elapsed = scheduler_ticks() - start_tick;
+			if (elapsed >= timeout_ticks) {
+				kspin_unlock(&mutex->lock);
+				return false;
+			}
+			wait_ticks = timeout_ticks - elapsed;
+		}
+
+		const bool signaled = kcondition_wait(&mutex->condition, &mutex->lock, wait_ticks);
+		if (!signaled && timeout_ticks != KWAIT_FOREVER && mutex->locked) {
+			kspin_unlock(&mutex->lock);
+			return false;
+		}
+	}
+
+	mutex->locked = true;
+	mutex->owner_task_id = current_task_id;
+	kspin_unlock(&mutex->lock);
+	return true;
+}
+
+void kmutex_unlock(kmutex_t* mutex) {
+	if (mutex == NULL)
+		return;
+
+	const uint32_t current_task_id = scheduler_current_task_id();
+
+	kspin_lock(&mutex->lock);
+	if (!mutex->locked) {
+		kspin_unlock(&mutex->lock);
+		panic("kmutex_unlock on unlocked mutex");
+	}
+
+	if (mutex->owner_task_id != current_task_id) {
+		const uint32_t owner_task_id = mutex->owner_task_id;
+		kspin_unlock(&mutex->lock);
+		panic("kmutex_unlock owner mismatch: owner=%u current=%u",
+			owner_task_id, current_task_id);
+	}
+
+	mutex->owner_task_id = 0;
+	mutex->locked = false;
+	kcondition_signal(&mutex->condition);
+	kspin_unlock(&mutex->lock);
+}
+
+bool kmutex_is_locked(const kmutex_t* mutex) {
+	if (mutex == NULL)
+		return false;
+	return mutex->locked;
+}
+
+uint32_t kmutex_owner_task(const kmutex_t* mutex) {
+	if (mutex == NULL)
+		return 0;
+	return mutex->owner_task_id;
 }
