@@ -28,11 +28,13 @@ bool paging_map_page(void* virtual_addr, uint32_t physical_addr, uint32_t flags)
 void paging_unmap_page(void* virtual_addr);
 bool paging_is_mapped(const void* virtual_addr);
 void* paging_alloc_pages(uint32_t page_count);
+void* paging_alloc_pages_on_node(uint32_t page_count, uint8_t preferred_numa_node);
 void paging_free_pages(void* base, uint32_t page_count);
 
 paging_space_t* paging_kernel_space(void);
 paging_space_t* paging_current_space(void);
 paging_space_t* paging_create_process_space(void);
+paging_space_t* paging_create_process_space_on_node(uint8_t preferred_numa_node);
 void paging_destroy_process_space(paging_space_t* space);
 void paging_switch_space(paging_space_t* space);
 uint32_t paging_space_root_physical(const paging_space_t* space);

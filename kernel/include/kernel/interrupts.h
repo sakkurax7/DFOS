@@ -22,6 +22,7 @@ typedef struct interrupt_frame {
 typedef interrupt_frame_t* (*interrupt_handler_t)(interrupt_frame_t* frame);
 
 void idt_init(void);
+void idt_load_current_cpu(void);
 void interrupts_enable(void);
 void interrupts_disable(void);
 void register_interrupt_handler(uint8_t vector, interrupt_handler_t handler);

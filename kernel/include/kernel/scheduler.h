@@ -72,11 +72,46 @@ typedef struct scheduler_self_test_report {
 	uint32_t failures;
 } scheduler_self_test_report_t;
 
+typedef struct scheduler_trace_counters {
+	uint64_t timer_ticks;
+	uint64_t schedule_events;
+	uint64_t context_switches;
+	uint64_t preemptions;
+	uint64_t voluntary_yields;
+	uint64_t wakeups;
+	uint64_t wait_calls;
+	uint64_t wait_timeouts;
+	uint64_t sleep_calls;
+	uint64_t task_creations;
+	uint64_t task_exits;
+	uint64_t priority_updates;
+	uint64_t load_balance_runs;
+	uint64_t load_balance_migrations;
+	uint64_t task_migrations;
+	uint64_t remote_wakeup_ipis;
+	uint64_t remote_reschedule_ipis;
+} scheduler_trace_counters_t;
+
+typedef struct scheduler_trace_latency_metric {
+	uint64_t sample_count;
+	uint64_t total_ticks;
+	uint32_t min_ticks;
+	uint32_t max_ticks;
+} scheduler_trace_latency_metric_t;
+
+typedef struct scheduler_trace_latency {
+	scheduler_trace_latency_metric_t runnable_wait_ticks;
+	scheduler_trace_latency_metric_t sleep_overshoot_ticks;
+	scheduler_trace_latency_metric_t wait_timeout_overshoot_ticks;
+} scheduler_trace_latency_t;
+
 void scheduler_init(void);
 void scheduler_topology_default(scheduler_topology_config_t* config);
 bool scheduler_configure_topology(const scheduler_topology_config_t* config);
 void scheduler_task_config_default(scheduler_task_config_t* config);
 void scheduler_bootstrap_current(const char* name);
+bool scheduler_bootstrap_secondary_current(
+	uint32_t cpu_id, uint32_t kernel_stack_top, const char* name);
 bool scheduler_create_kernel_task(const char* name, kernel_task_entry_t entry, void* arg);
 bool scheduler_create_kernel_task_ex(const char* name, kernel_task_entry_t entry,
 	void* arg, const scheduler_task_config_t* config);
@@ -86,6 +121,8 @@ interrupt_frame_t* scheduler_on_yield(interrupt_frame_t* frame);
 void scheduler_sleep(uint32_t ticks);
 bool scheduler_wait_channel(const void* wait_channel, uint32_t timeout_ticks);
 uint32_t scheduler_wake_channel(const void* wait_channel, uint32_t max_count);
+bool scheduler_join_task(uint32_t task_id, uint32_t timeout_ticks);
+uint32_t scheduler_reap_zombies(uint32_t max_count);
 void scheduler_yield(void);
 __attribute__((__noreturn__)) void scheduler_exit_current(void);
 uint32_t scheduler_ticks(void);
@@ -97,6 +134,9 @@ bool scheduler_get_task_snapshot(uint32_t index, scheduler_task_snapshot_t* snap
 uint32_t scheduler_cpu_count(void);
 bool scheduler_get_cpu_snapshot(uint32_t index, scheduler_cpu_snapshot_t* snapshot);
 void scheduler_get_list_snapshot(scheduler_list_snapshot_t* snapshot);
+void scheduler_trace_reset(void);
+bool scheduler_get_trace_counters(scheduler_trace_counters_t* counters);
+bool scheduler_get_trace_latency(scheduler_trace_latency_t* latency);
 bool scheduler_run_self_tests(scheduler_self_test_report_t* report);
 
 #endif

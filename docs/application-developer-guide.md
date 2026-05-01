@@ -26,6 +26,7 @@ The easiest way to prototype application logic today is to add a kernel task wit
 - `scheduler_create_kernel_task`
 - `scheduler_create_kernel_task_ex`
 - `scheduler_task_config_default`
+- `scheduler_join_task` / `scheduler_reap_zombies`
 - `printf`
 - `scheduler_sleep`
 - `vfs_open` and `vfs_read`
@@ -97,6 +98,7 @@ static void my_task(void* arg) {
 Important:
 
 - Returning from a task exits it
+- Exited tasks become zombies until a caller joins or reaps them
 - Tasks share the whole kernel address space
 - Bugs in task code can crash the entire OS
 
@@ -117,7 +119,7 @@ scheduler_create_kernel_task_ex("net", net_task, NULL, &config);
 Notes:
 
 - Lower enum values are higher priority (`REALTIME` is highest)
-- Affinity and NUMA preferences are policy hints; current i386 runtime only executes on CPU 0
+- Affinity and NUMA preferences are honored by scheduler policy and periodic cross-CPU balancing, and task stacks/process page roots now use preferred-node-aware physical allocation with fallback
 
 ## File Access Model
 
