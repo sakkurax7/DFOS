@@ -10,6 +10,7 @@
 #include <kernel/x86.h>
 
 #define IDT_ENTRIES 256
+#define ISR_STUB_LAST_VECTOR 50u
 
 typedef struct idt_entry {
 	uint16_t offset_low;
@@ -84,11 +85,11 @@ interrupt_frame_t* isr_dispatch(interrupt_frame_t* frame) {
 }
 
 void idt_init(void) {
-	for (uint16_t vector = 0; vector < 49; vector++)
+	for (uint16_t vector = 0; vector <= ISR_STUB_LAST_VECTOR; vector++)
 		idt_set_gate((uint8_t) vector, (uint32_t) isr_stub_table[vector], 0x8E);
 
-	for (uint16_t vector = 49; vector < IDT_ENTRIES; vector++)
-		idt_set_gate((uint8_t) vector, (uint32_t) isr_stub_table[48], 0x8E);
+	for (uint16_t vector = ISR_STUB_LAST_VECTOR + 1; vector < IDT_ENTRIES; vector++)
+		idt_set_gate((uint8_t) vector, (uint32_t) isr_stub_table[ISR_STUB_LAST_VECTOR], 0x8E);
 
 	idt_descriptor.size = sizeof(idt) - 1;
 	idt_descriptor.offset = (uint32_t) &idt;
@@ -96,6 +97,10 @@ void idt_init(void) {
 	if (!irq_controller_initialize())
 		panic("no IRQ controller registered");
 
+	idt_load(&idt_descriptor);
+}
+
+void idt_load_current_cpu(void) {
 	idt_load(&idt_descriptor);
 }
 

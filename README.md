@@ -82,14 +82,17 @@ sh ./scripts/macos-toolchain.sh install
 - The GDT now includes a TSS descriptor; `ltr` loads it during init and the scheduler updates `esp0` on task switches.
 - The scheduler now switches address spaces during task switches, and each kernel task gets its own process page-directory ownership.
 - The scheduler uses per-CPU priority runqueues, explicit thread lists, and NUMA-aware CPU selection policy (with affinity + preferred-node hints).
+- Scheduler lifecycle APIs now include `scheduler_join_task` and `scheduler_reap_zombies` so exited workers can be collected instead of leaking zombie slots.
+- PMM now supports NUMA-aware preferred-node frame allocation with fallback and per-node free-range introspection.
 - The heap allocator is now slab-based for small allocations, with page-backed large allocations.
 - Boot memory-map parsing now goes through a bootloader-neutral `bootinfo` layer with a Multiboot v1 backend.
 - The current i386 platform wires a VGA text console, a COM1 serial console, a PS/2 keyboard, an 8259 PIC, and an 8253/8254 PIT into the generic kernel interfaces through [`kernel/arch/i386/platform.c`](kernel/arch/i386/platform.c).
 - Hardware backends are selected through a small static module registry in [`kernel/include/kernel/module.h`](kernel/include/kernel/module.h), which gives future APIC, HPET, or storage-controller work one shared activation pattern.
 - Press `F1` at runtime to enter the internal kernel debugger.
 - In the debugger, run `test all` (or `test list` and then `test <subsystem>`) for quick subsystem checks with uniform PASS/FAIL reporting.
+- Use `numa` to inspect PMM node ranges/free counts and `schedstat` (`schedstat reset`) to tune scheduler behavior with counters and latency stats.
 - Use `paniclog` to inspect captured crash reports, and `paniclog clear` to reset the in-memory panic history.
-- Current open scheduler issue: i386 bring-up still runs only CPU 0, so policy is SMP/NUMA-aware before full multi-core execution support lands.
+- Scheduler now supports SMP bring-up with per-CPU runqueues, remote wake/reschedule IPIs, and periodic runnable-task load balancing.
 
 ## Documentation
 

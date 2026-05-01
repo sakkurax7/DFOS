@@ -61,14 +61,25 @@ void kernel_main(uint32_t multiboot_magic, uint32_t multiboot_info_addr) {
 		panic("failed to initialize input driver");
 	vfs_init();
 	scheduler_init();
+	scheduler_topology_config_t topology;
+	scheduler_topology_default(&topology);
+	if (!cpu_smp_prepare_topology(&topology))
+		panic("failed to prepare cpu topology");
+	if (!scheduler_configure_topology(&topology))
+		panic("failed to apply cpu topology");
 	if (!timer_initialize(100, scheduler_on_timer_tick))
 		panic("failed to initialize timer driver");
 	scheduler_bootstrap_current("bootstrap");
+	if (!cpu_smp_start_secondary_cores())
+		panic("failed to start secondary cpus");
+	cpu_smp_release_secondary_cores();
 	kdebug_init();
 
 	// These boot-time banners are the quickest sanity check when bringing up new hardware code.
-	printf("physical memory: %u KiB total, %u KiB free\n",
-		pmm_total_memory_kib(), pmm_free_memory_kib());
+	const uint8_t numa_nodes = pmm_numa_node_count();
+	printf("physical memory: %u KiB total, %u KiB free (%u NUMA node%s)\n",
+		pmm_total_memory_kib(), pmm_free_memory_kib(),
+		(unsigned) numa_nodes, numa_nodes == 1 ? "" : "s");
 	printf("heap window: %p - %p\n", heap_start(), heap_end());
 	printf("paging mode: %s (PAE supported: %s)\n",
 		paging_mode_name(), paging_pae_supported() ? "yes" : "no");
@@ -79,6 +90,8 @@ void kernel_main(uint32_t multiboot_magic, uint32_t multiboot_info_addr) {
 	printf("input: %s\n", input_driver_name());
 	printf("timer: %s @ %u Hz\n", timer_driver_name(), timer_frequency_hz());
 	printf("irq controller: %s\n", irq_controller_name());
+	printf("cpu topology: %u cpu(s), smp %s\n", scheduler_cpu_count(),
+		cpu_smp_available() ? "enabled" : "disabled");
 	printf("module candidates: %u console, %u input, %u timer, %u irq\n",
 		(unsigned) module_registered_count(MODULE_KIND_CONSOLE),
 		(unsigned) module_registered_count(MODULE_KIND_INPUT),

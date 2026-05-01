@@ -64,11 +64,28 @@ static inline void x86_hlt(void) {
 	asm volatile("hlt");
 }
 
+static inline void x86_pause(void) {
+	asm volatile("pause");
+}
+
 static inline void x86_cpuid(uint32_t leaf, uint32_t* eax, uint32_t* ebx,
 		uint32_t* ecx, uint32_t* edx) {
 	asm volatile("cpuid"
 		: "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
 		: "a"(leaf));
+}
+
+static inline uint64_t x86_rdmsr(uint32_t msr) {
+	uint32_t low;
+	uint32_t high;
+	asm volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+	return ((uint64_t) high << 32) | low;
+}
+
+static inline void x86_wrmsr(uint32_t msr, uint64_t value) {
+	const uint32_t low = (uint32_t) value;
+	const uint32_t high = (uint32_t) (value >> 32);
+	asm volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
 }
 
 static inline bool x86_cpu_has_pae(void) {

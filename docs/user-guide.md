@@ -71,11 +71,13 @@ Debugger commands:
 - `help`: show available commands
 - `tasks`: show kernel task state, priority, affinity, and placement
 - `cpus`: show per-CPU runnable state and scheduler list counts
-- `mem`: show total and free memory
+- `mem`: show total/free memory and active NUMA node count
+- `numa`: show per-node frame ranges and free counts
+- `schedstat [reset]`: show or reset scheduler counters and latency metrics
 - `ls`: list files in the initrd
 - `cat <file>`: print a file from the initrd
 - `test all`: run all built-in subsystem tests
-- `test memmap|vma|slab|aspace|sched|sync`: run one test group
+- `test memmap|vma|slab|pmm|aspace|sched|sync|panic`: run one test group
 - `continue`: leave the debugger
 
 Example session:
@@ -143,7 +145,7 @@ DFOS is still early-stage software. Current limits include:
 - No userspace programs
 - No ring-3 execution yet (address-space isolation is now in place for tasks)
 - No login or shell environment
-- Scheduler policy is NUMA-aware, but only CPU 0 is active today on i386
-- No cross-CPU IPIs or NUMA-aware physical page allocator yet
+- Scheduler now supports per-CPU runqueues, cross-CPU wake/reschedule IPIs, and periodic task migration balancing
+- Physical NUMA layout is policy-driven (even frame partitioning by configured node count), not firmware-discovered from ACPI SRAT yet
 
 The current experience is best thought of as "boot the kernel, inspect it, and test subsystems."

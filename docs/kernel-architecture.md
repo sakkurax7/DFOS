@@ -143,6 +143,8 @@ Behavior:
 - Marks bootloader-reported `available` regions free
 - Re-reserves low memory, the kernel image, boot-info structures, loaded modules, and the bitmap itself
 - Supports single-frame and contiguous-frame allocation and free operations
+- Provides NUMA-aware preferred-node allocation with fallback across nodes
+- Tracks per-node frame ranges and free counts for debugger/runtime introspection
 
 This now backs live on-demand page-table growth and general physical memory ownership tracking.
 
@@ -159,19 +161,22 @@ This now backs live on-demand page-table growth and general physical memory owne
 
 [`../kernel/kernel/scheduler.c`](../kernel/kernel/scheduler.c) implements kernel thread scheduling:
 
-- Fixed-size thread table with explicit thread lists (free, runnable, sleeping, zombie)
+- Fixed-size thread table with explicit thread lists (free, runnable, sleeping, blocked, zombie)
 - Per-CPU run queues with strict priority classes
 - NUMA-aware task placement policy (preferred node + CPU affinity mask)
 - Priority-aware preemption through timer ticks and software-interrupt yield
 - Tick-based sleeping and wake-up management
+- Periodic cross-CPU load balancing with scheduler-safe runnable-task migration
 - Extended task-creation API for priority and placement hints
+- Explicit task lifecycle cleanup via join/reap APIs for zombie collection
 
 Tasks now own separate paging spaces and the scheduler switches `CR3` during context switches. Execution is still kernel-mode only.
 
 Current implementation notes:
 
-- The scheduling policy is NUMA-aware and SMP-ready, but current i386 bring-up only runs CPU 0.
-- The scheduler includes built-in self-tests for thread-list ordering, priority dispatch, and NUMA/affinity CPU selection.
+- The scheduling policy is NUMA-aware and SMP-active on i386 bring-up.
+- The scheduler includes built-in self-tests for thread-list ordering, priority dispatch, NUMA/affinity CPU selection, migration safety, and load-balancing behavior.
+- The scheduler exports trace counters and latency metrics (runnable wait + timeout overshoot) for tuning.
 
 ## Input And Debugger
 
@@ -183,6 +188,8 @@ Current implementation notes:
 - `tasks`
 - `cpus`
 - `mem`
+- `numa`
+- `schedstat [reset]`
 - `ls`
 - `cat <file>`
 - `test [all|<subsystem>|list]`

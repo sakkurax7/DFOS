@@ -55,6 +55,11 @@ typedef struct kdebug_mutex_timeout_ctx {
 	volatile bool worker_timed_out;
 } kdebug_mutex_timeout_ctx_t;
 
+typedef struct kdebug_scheduler_join_ctx {
+	volatile uint32_t task_id;
+	volatile bool exited;
+} kdebug_scheduler_join_ctx_t;
+
 typedef struct kdebug_lifetime_object {
 	kobject_t object;
 	volatile uint32_t* release_counter;
@@ -62,6 +67,30 @@ typedef struct kdebug_lifetime_object {
 
 static bool starts_with(const char* text, const char* prefix) {
 	return strncmp(text, prefix, strlen(prefix)) == 0;
+}
+
+static bool kdebug_test_scheduler_join(void);
+
+static uint32_t kdebug_zombie_count(void) {
+	scheduler_list_snapshot_t lists;
+	scheduler_get_list_snapshot(&lists);
+	return lists.zombie_count;
+}
+
+static bool kdebug_reap_zombies_to_target(uint32_t target_zombies, uint32_t timeout_ticks) {
+	const uint32_t start_tick = scheduler_ticks();
+	while (kdebug_zombie_count() > target_zombies) {
+		(void) scheduler_reap_zombies(0);
+		if (kdebug_zombie_count() <= target_zombies)
+			return true;
+
+		if ((scheduler_ticks() - start_tick) >= timeout_ticks)
+			break;
+		scheduler_sleep(1u);
+	}
+
+	(void) scheduler_reap_zombies(0);
+	return kdebug_zombie_count() <= target_zombies;
 }
 
 static void kdebug_stats_add(ktest_stats_t* stats, uint32_t checks, uint32_t failures) {
@@ -152,6 +181,16 @@ static void kdebug_mutex_timeout_task(void* arg) {
 	context->worker_done = true;
 }
 
+static void kdebug_scheduler_join_task(void* arg) {
+	kdebug_scheduler_join_ctx_t* context = (kdebug_scheduler_join_ctx_t*) arg;
+	if (context == NULL)
+		return;
+
+	context->task_id = scheduler_current_task_id();
+	scheduler_sleep(2u);
+	context->exited = true;
+}
+
 static void kdebug_show_tasks(void) {
 	scheduler_task_snapshot_t snapshot;
 	const uint32_t count = scheduler_task_count();
@@ -184,6 +223,71 @@ static void kdebug_show_cpus(void) {
 	printf("lists: free=%u runnable=%u sleeping=%u blocked=%u zombie=%u\n",
 		lists.free_count, lists.runnable_count, lists.sleeping_count,
 		lists.blocked_count, lists.zombie_count);
+}
+
+static void kdebug_show_numa(void) {
+	const uint8_t node_count = pmm_numa_node_count();
+	printf("numa: nodes=%u\n", (unsigned) node_count);
+
+	for (uint8_t node = 0; node < node_count; node++) {
+		pmm_numa_node_stats_t stats;
+		if (!pmm_get_numa_node_stats(node, &stats))
+			continue;
+
+		const uint64_t start_phys = (uint64_t) stats.first_frame * PAGE_SIZE;
+		const uint64_t end_phys = start_phys + (uint64_t) stats.frame_count * PAGE_SIZE;
+		printf("node %u: frames=%u free=%u range=[0x%llx, 0x%llx)\n",
+			(unsigned) stats.node_id, stats.frame_count, stats.free_frames,
+			(unsigned long long) start_phys, (unsigned long long) end_phys);
+	}
+}
+
+static void kdebug_print_latency_metric(
+	const char* name, const scheduler_trace_latency_metric_t* metric) {
+	if (name == NULL || metric == NULL)
+		return;
+
+	printf("%s: samples=%llu total=%llu min=%u max=%u\n",
+		name,
+		(unsigned long long) metric->sample_count,
+		(unsigned long long) metric->total_ticks,
+		metric->min_ticks,
+		metric->max_ticks);
+}
+
+static void kdebug_show_schedstat(void) {
+	scheduler_trace_counters_t counters = { 0 };
+	scheduler_trace_latency_t latency = { 0 };
+	if (!scheduler_get_trace_counters(&counters) || !scheduler_get_trace_latency(&latency)) {
+		printf("schedstat: unavailable\n");
+		return;
+	}
+
+	printf("schedstat: ticks=%llu schedule=%llu switches=%llu preempt=%llu yields=%llu wakeups=%llu\n",
+		(unsigned long long) counters.timer_ticks,
+		(unsigned long long) counters.schedule_events,
+		(unsigned long long) counters.context_switches,
+		(unsigned long long) counters.preemptions,
+		(unsigned long long) counters.voluntary_yields,
+		(unsigned long long) counters.wakeups);
+	printf("schedstat: waits=%llu timeouts=%llu sleeps=%llu creates=%llu exits=%llu prio_updates=%llu\n",
+		(unsigned long long) counters.wait_calls,
+		(unsigned long long) counters.wait_timeouts,
+		(unsigned long long) counters.sleep_calls,
+		(unsigned long long) counters.task_creations,
+		(unsigned long long) counters.task_exits,
+		(unsigned long long) counters.priority_updates);
+	printf("schedstat: balance_runs=%llu balance_moves=%llu migrations=%llu remote_wake_ipi=%llu remote_resched_ipi=%llu\n",
+		(unsigned long long) counters.load_balance_runs,
+		(unsigned long long) counters.load_balance_migrations,
+		(unsigned long long) counters.task_migrations,
+		(unsigned long long) counters.remote_wakeup_ipis,
+		(unsigned long long) counters.remote_reschedule_ipis);
+
+	kdebug_print_latency_metric("runnable_wait_ticks", &latency.runnable_wait_ticks);
+	kdebug_print_latency_metric("sleep_overshoot_ticks", &latency.sleep_overshoot_ticks);
+	kdebug_print_latency_metric(
+		"wait_timeout_overshoot_ticks", &latency.wait_timeout_overshoot_ticks);
 }
 
 static void kdebug_list_files(void) {
@@ -353,10 +457,109 @@ cleanup:
 
 static bool kdebug_test_scheduler(ktest_stats_t* stats) {
 	scheduler_self_test_report_t report;
-	const bool pass = scheduler_run_self_tests(&report);
+	bool pass = scheduler_run_self_tests(&report);
 
 	kdebug_stats_add(stats, report.checks, report.failures);
-	printf("sched: checks=%u failures=%u\n", report.checks, report.failures);
+	scheduler_trace_counters_t counters;
+	scheduler_trace_latency_t latency;
+	const bool trace_ok =
+		scheduler_get_trace_counters(&counters) && scheduler_get_trace_latency(&latency);
+	ktest_stats_record(stats, trace_ok);
+	pass = pass && trace_ok;
+	const bool join_ok = kdebug_test_scheduler_join();
+	ktest_stats_record(stats, join_ok);
+	pass = pass && join_ok;
+
+	printf("sched: checks=%u failures=%u trace=%s join=%s schedule=%llu switches=%llu\n",
+		report.checks, report.failures, trace_ok ? "ok" : "fail",
+		join_ok ? "ok" : "fail",
+		(unsigned long long) counters.schedule_events,
+		(unsigned long long) counters.context_switches);
+	return pass;
+}
+
+static bool kdebug_test_scheduler_join(void) {
+	kdebug_scheduler_join_ctx_t context;
+	context.task_id = 0;
+	context.exited = false;
+
+	if (!scheduler_create_kernel_task("sched-join", kdebug_scheduler_join_task, &context)) {
+		printf("sched-join: failed to create join target task\n");
+		return false;
+	}
+
+	const uint32_t wait_id_start = scheduler_ticks();
+	while (context.task_id == 0 && (scheduler_ticks() - wait_id_start) < 100u)
+		scheduler_sleep(1u);
+
+	if (context.task_id == 0) {
+		printf("sched-join: task id was not published by target\n");
+		(void) scheduler_reap_zombies(0);
+		return false;
+	}
+
+	const bool joined = scheduler_join_task(context.task_id, 200u);
+	const bool pass = joined && context.exited;
+	if (!joined)
+		(void) scheduler_reap_zombies(0);
+
+	printf("sched-join: id=%u joined=%s exited=%s\n",
+		context.task_id, joined ? "yes" : "no", context.exited ? "yes" : "no");
+	return pass;
+}
+
+static bool kdebug_test_pmm_numa(ktest_stats_t* stats) {
+	const uint8_t node_count = pmm_numa_node_count();
+	bool pass = node_count > 0;
+	uint8_t preferred_node = PMM_NUMA_NODE_ANY;
+	pmm_numa_node_stats_t preferred_stats = { 0 };
+
+	for (uint8_t node = 0; node < node_count; node++) {
+		pmm_numa_node_stats_t snapshot;
+		if (!pmm_get_numa_node_stats(node, &snapshot))
+			continue;
+
+		if (snapshot.frame_count == 0)
+			continue;
+
+		preferred_node = node;
+		preferred_stats = snapshot;
+		break;
+	}
+
+	if (preferred_node == PMM_NUMA_NODE_ANY) {
+		printf("pmm: no NUMA node has physical frames\n");
+		ktest_stats_record(stats, false);
+		return false;
+	}
+
+	uint32_t preferred_frame = 0;
+	if (!pmm_alloc_frame_on_node(preferred_node, &preferred_frame)) {
+		printf("pmm: preferred allocation failed on node %u\n", (unsigned) preferred_node);
+		ktest_stats_record(stats, false);
+		return false;
+	}
+
+	const uint8_t actual_node = pmm_numa_node_for_physical(preferred_frame);
+	if (preferred_stats.free_frames > 0)
+		pass = pass && actual_node == preferred_node;
+	else
+		pass = pass && actual_node != PMM_NUMA_NODE_ANY;
+
+	pmm_free_frame(preferred_frame);
+
+	uint32_t fallback_frame = 0;
+	const bool fallback_ok = pmm_alloc_frame_on_node(node_count, &fallback_frame);
+	pass = pass && fallback_ok;
+	if (fallback_ok)
+		pmm_free_frame(fallback_frame);
+
+	printf("pmm: nodes=%u preferred=%u actual=%u fallback=%s\n",
+		(unsigned) node_count,
+		(unsigned) preferred_node,
+		(unsigned) actual_node,
+		fallback_ok ? "ok" : "fail");
+	ktest_stats_record(stats, pass);
 	return pass;
 }
 
@@ -371,6 +574,7 @@ static bool kdebug_test_sync_locking(void) {
 	context.counter = 0;
 	context.done_workers = 0;
 	context.iterations_per_worker = 600u;
+	const uint32_t baseline_zombies = kdebug_zombie_count();
 
 	bool pass = true;
 	pass = pass && scheduler_create_kernel_task("sync-lock-a", kdebug_sync_counter_task, &context);
@@ -388,9 +592,11 @@ static bool kdebug_test_sync_locking(void) {
 	const uint32_t expected = context.iterations_per_worker * 2u;
 	pass = pass && context.done_workers == 2u;
 	pass = pass && context.counter == expected;
+	const bool reaped = kdebug_reap_zombies_to_target(baseline_zombies, 100u);
+	pass = pass && reaped;
 
-	printf("sync-lock: done=%u counter=%u expected=%u\n",
-		context.done_workers, context.counter, expected);
+	printf("sync-lock: done=%u counter=%u expected=%u reaped=%s\n",
+		context.done_workers, context.counter, expected, reaped ? "yes" : "no");
 	return pass;
 }
 
@@ -437,6 +643,7 @@ static bool kdebug_test_wait_queue_wake(void) {
 	context.waiter_done = false;
 	context.waiter_woke = false;
 	context.waiter_timed_out = false;
+	const uint32_t baseline_zombies = kdebug_zombie_count();
 
 	bool pass = true;
 	pass = pass && scheduler_create_kernel_task("sync-waiter", kdebug_sync_waiter_task, &context);
@@ -454,11 +661,14 @@ static bool kdebug_test_wait_queue_wake(void) {
 	pass = pass && context.waiter_done;
 	pass = pass && context.waiter_woke;
 	pass = pass && !context.waiter_timed_out;
+	const bool reaped = kdebug_reap_zombies_to_target(baseline_zombies, 100u);
+	pass = pass && reaped;
 
-	printf("sync-wait-wake: done=%s woke=%s timed_out=%s\n",
+	printf("sync-wait-wake: done=%s woke=%s timed_out=%s reaped=%s\n",
 		context.waiter_done ? "yes" : "no",
 		context.waiter_woke ? "yes" : "no",
-		context.waiter_timed_out ? "yes" : "no");
+		context.waiter_timed_out ? "yes" : "no",
+		reaped ? "yes" : "no");
 	return pass;
 }
 
@@ -468,6 +678,7 @@ static bool kdebug_test_mutex_locking(void) {
 	context.counter = 0;
 	context.done_workers = 0;
 	context.iterations_per_worker = 400u;
+	const uint32_t baseline_zombies = kdebug_zombie_count();
 
 	bool pass = true;
 	pass = pass && scheduler_create_kernel_task("sync-mutex-a", kdebug_mutex_counter_task, &context);
@@ -485,9 +696,11 @@ static bool kdebug_test_mutex_locking(void) {
 	const uint32_t expected = context.iterations_per_worker * 2u;
 	pass = pass && context.done_workers == 2u;
 	pass = pass && context.counter == expected;
+	const bool reaped = kdebug_reap_zombies_to_target(baseline_zombies, 100u);
+	pass = pass && reaped;
 
-	printf("sync-mutex: done=%u counter=%u expected=%u\n",
-		context.done_workers, context.counter, expected);
+	printf("sync-mutex: done=%u counter=%u expected=%u reaped=%s\n",
+		context.done_workers, context.counter, expected, reaped ? "yes" : "no");
 	return pass;
 }
 
@@ -497,6 +710,7 @@ static bool kdebug_test_mutex_timeout(void) {
 	context.worker_done = false;
 	context.worker_acquired = false;
 	context.worker_timed_out = false;
+	const uint32_t baseline_zombies = kdebug_zombie_count();
 
 	kmutex_lock(&context.mutex);
 	bool pass = scheduler_create_kernel_task("sync-mutex-timeout", kdebug_mutex_timeout_task, &context);
@@ -515,11 +729,14 @@ static bool kdebug_test_mutex_timeout(void) {
 	pass = pass && context.worker_done;
 	pass = pass && !context.worker_acquired;
 	pass = pass && context.worker_timed_out;
+	const bool reaped = kdebug_reap_zombies_to_target(baseline_zombies, 100u);
+	pass = pass && reaped;
 
-	printf("sync-mutex-timeout: done=%s acquired=%s timed_out=%s\n",
+	printf("sync-mutex-timeout: done=%s acquired=%s timed_out=%s reaped=%s\n",
 		context.worker_done ? "yes" : "no",
 		context.worker_acquired ? "yes" : "no",
-		context.worker_timed_out ? "yes" : "no");
+		context.worker_timed_out ? "yes" : "no",
+		reaped ? "yes" : "no");
 	return pass;
 }
 
@@ -661,6 +878,7 @@ static void kdebug_register_tests(void) {
 	kdebug_register_test_hook("memmap", kdebug_test_memmap);
 	kdebug_register_test_hook("vma", kdebug_test_vma_tree);
 	kdebug_register_test_hook("slab", kdebug_test_slab);
+	kdebug_register_test_hook("pmm", kdebug_test_pmm_numa);
 	kdebug_register_test_hook("aspace", kdebug_test_address_spaces);
 	kdebug_register_test_hook("sched", kdebug_test_scheduler);
 	kdebug_register_test_hook("sync", kdebug_test_sync_primitives);
@@ -670,14 +888,21 @@ static void kdebug_register_tests(void) {
 
 static void kdebug_execute(char* line) {
 	if (strcmp(line, "help") == 0) {
-		printf("commands: help, tasks, cpus, mem, ls, cat <file>, test [all|<subsystem>|list], paniclog [clear], continue\n");
+		printf("commands: help, tasks, cpus, mem, numa, schedstat [reset], ls, cat <file>, test [all|<subsystem>|list], paniclog [clear], continue\n");
 	} else if (strcmp(line, "tasks") == 0) {
 		kdebug_show_tasks();
 	} else if (strcmp(line, "cpus") == 0) {
 		kdebug_show_cpus();
 	} else if (strcmp(line, "mem") == 0) {
-		printf("memory: total=%u KiB free=%u KiB\n",
-			pmm_total_memory_kib(), pmm_free_memory_kib());
+		printf("memory: total=%u KiB free=%u KiB numa_nodes=%u\n",
+			pmm_total_memory_kib(), pmm_free_memory_kib(), (unsigned) pmm_numa_node_count());
+	} else if (strcmp(line, "numa") == 0) {
+		kdebug_show_numa();
+	} else if (strcmp(line, "schedstat") == 0) {
+		kdebug_show_schedstat();
+	} else if (strcmp(line, "schedstat reset") == 0) {
+		scheduler_trace_reset();
+		printf("schedstat: reset\n");
 	} else if (strcmp(line, "ls") == 0) {
 		kdebug_list_files();
 	} else if (starts_with(line, "cat ")) {

@@ -43,6 +43,7 @@ static paging_runtime_mode_t paging_mode = PAGING_MODE_LEGACY;
 struct paging_space {
 	bool in_use;
 	uint32_t root_physical;
+	uint8_t preferred_numa_node;
 };
 
 static paging_space_t paging_spaces[PAGING_MAX_SPACES];
@@ -80,6 +81,7 @@ static paging_space_t* paging_allocate_space_record(void) {
 			continue;
 		paging_spaces[i].in_use = true;
 		paging_spaces[i].root_physical = 0;
+		paging_spaces[i].preferred_numa_node = PMM_NUMA_NODE_ANY;
 		return &paging_spaces[i];
 	}
 
@@ -89,6 +91,7 @@ static paging_space_t* paging_allocate_space_record(void) {
 static void paging_release_space_record(paging_space_t* space) {
 	space->in_use = false;
 	space->root_physical = 0;
+	space->preferred_numa_node = PMM_NUMA_NODE_ANY;
 }
 
 // -----------------------------------------------------------------------------
@@ -309,7 +312,7 @@ static bool legacy_map_user_page_in_space(paging_space_t* space, uint32_t virtua
 
 	if ((pde & PAGE_PRESENT) == 0) {
 		uint32_t table_physical;
-		if (!pmm_alloc_frame(&table_physical))
+		if (!pmm_alloc_frame_on_node(space->preferred_numa_node, &table_physical))
 			return false;
 
 		table = (volatile uint32_t*) paging_phys_to_virt(table_physical);
@@ -731,7 +734,7 @@ static bool pae_map_user_page_in_space(paging_space_t* space, uint32_t virtual_a
 
 	if ((pdpte & PAE_ENTRY_PRESENT) == 0) {
 		uint32_t directory_physical;
-		if (!pmm_alloc_frame(&directory_physical))
+		if (!pmm_alloc_frame_on_node(space->preferred_numa_node, &directory_physical))
 			return false;
 
 		directory = (uint64_t*) paging_phys_to_virt(directory_physical);
@@ -752,7 +755,7 @@ static bool pae_map_user_page_in_space(paging_space_t* space, uint32_t virtual_a
 	pde = directory[directory_index];
 	if ((pde & PAE_ENTRY_PRESENT) == 0) {
 		uint32_t table_physical;
-		if (!pmm_alloc_frame(&table_physical))
+		if (!pmm_alloc_frame_on_node(space->preferred_numa_node, &table_physical))
 			return false;
 
 		table = (uint64_t*) paging_phys_to_virt(table_physical);
@@ -846,11 +849,6 @@ static void pae_protect_range(uint32_t start, uint32_t end) {
 	}
 }
 
-static void pae_drop_identity_mapping(void) {
-	pae_pdpt[PAE_PDPT_ENTRY_LOW] = 0;
-	paging_flush_tlb();
-}
-
 // -----------------------------------------------------------------------------
 // Common paging interface
 // -----------------------------------------------------------------------------
@@ -913,11 +911,11 @@ void paging_init(uint32_t multiboot_info_addr) {
 		paging_mode = PAGING_MODE_PAE;
 		pae_active = true;
 		pae_ready = true;
-		pae_drop_identity_mapping();
 	}
 
 	paging_spaces[0].in_use = true;
 	paging_spaces[0].root_physical = x86_read_cr3() & 0xFFFFF000u;
+	paging_spaces[0].preferred_numa_node = PMM_NUMA_NODE_ANY;
 	kernel_space = &paging_spaces[0];
 	current_space = kernel_space;
 
@@ -1049,9 +1047,9 @@ void paging_switch_space(paging_space_t* space) {
 	x86_write_cr3(space->root_physical & 0xFFFFF000u);
 }
 
-static paging_space_t* legacy_create_process_space(void) {
+static paging_space_t* legacy_create_process_space(uint8_t preferred_numa_node) {
 	uint32_t directory_physical;
-	if (!pmm_alloc_frame(&directory_physical))
+	if (!pmm_alloc_frame_on_node(preferred_numa_node, &directory_physical))
 		return NULL;
 
 	volatile uint32_t* directory =
@@ -1074,12 +1072,13 @@ static paging_space_t* legacy_create_process_space(void) {
 	}
 
 	space->root_physical = directory_physical & 0xFFFFF000u;
+	space->preferred_numa_node = preferred_numa_node;
 	return space;
 }
 
-static paging_space_t* pae_create_process_space(void) {
+static paging_space_t* pae_create_process_space(uint8_t preferred_numa_node) {
 	uint32_t pdpt_physical;
-	if (!pmm_alloc_frame(&pdpt_physical))
+	if (!pmm_alloc_frame_on_node(preferred_numa_node, &pdpt_physical))
 		return NULL;
 
 	uint64_t* pdpt = (uint64_t*) paging_phys_to_virt(pdpt_physical & 0xFFFFF000u);
@@ -1096,10 +1095,15 @@ static paging_space_t* pae_create_process_space(void) {
 	}
 
 	space->root_physical = pdpt_physical & 0xFFFFF000u;
+	space->preferred_numa_node = preferred_numa_node;
 	return space;
 }
 
 paging_space_t* paging_create_process_space(void) {
+	return paging_create_process_space_on_node(PMM_NUMA_NODE_ANY);
+}
+
+paging_space_t* paging_create_process_space_on_node(uint8_t preferred_numa_node) {
 	if (!pmm_is_initialized())
 		return NULL;
 
@@ -1107,9 +1111,9 @@ paging_space_t* paging_create_process_space(void) {
 		return NULL;
 
 	if (paging_mode == PAGING_MODE_PAE)
-		return pae_create_process_space();
+		return pae_create_process_space(preferred_numa_node);
 
-	return legacy_create_process_space();
+	return legacy_create_process_space(preferred_numa_node);
 }
 
 static void legacy_destroy_process_space(paging_space_t* space) {
@@ -1227,6 +1231,10 @@ void paging_unmap_user_page(paging_space_t* space, void* virtual_addr) {
 }
 
 void* paging_alloc_pages(uint32_t page_count) {
+	return paging_alloc_pages_on_node(page_count, PMM_NUMA_NODE_ANY);
+}
+
+void* paging_alloc_pages_on_node(uint32_t page_count, uint8_t preferred_numa_node) {
 	if (page_count == 0 || !pmm_is_initialized())
 		return NULL;
 
@@ -1243,7 +1251,7 @@ void* paging_alloc_pages(uint32_t page_count) {
 
 	for (uint32_t i = 0; i < page_count; i++) {
 		uint32_t frame;
-		if (!pmm_alloc_frame(&frame))
+		if (!pmm_alloc_frame_on_node(preferred_numa_node, &frame))
 			goto rollback;
 
 		const uint32_t virtual_page = base_virtual + i * PAGE_SIZE;

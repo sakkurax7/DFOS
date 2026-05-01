@@ -24,14 +24,14 @@ This is the working checklist from current DFOS status to:
 
 ## Phase 1: Real Multiprocessing And Scheduling Maturity
 
-- [ ] Bring up AP cores on i386 SMP path (LAPIC + startup IPIs).
-- [ ] Implement real `cpu_current_id` from APIC/CPU-local state.
-- [ ] Add inter-processor interrupts for reschedule and remote wakeup.
-- [ ] Add periodic load balancing across per-CPU runqueues.
-- [ ] Add scheduler-safe task migration between CPUs.
-- [ ] Add NUMA-aware physical page allocation policy (not only CPU placement).
-- [ ] Add scheduler tracing counters and latency stats for tuning.
-- [ ] Add thread join/reap path to clean zombie tasks.
+- [x] Bring up AP cores on i386 SMP path (LAPIC + startup IPIs).
+- [x] Implement real `cpu_current_id` from APIC/CPU-local state.
+- [x] Add inter-processor interrupts for reschedule and remote wakeup.
+- [x] Add periodic load balancing across per-CPU runqueues.
+- [x] Add scheduler-safe task migration between CPUs.
+- [x] Add NUMA-aware physical page allocation policy (not only CPU placement).
+- [x] Add scheduler tracing counters and latency stats for tuning.
+- [x] Add thread join/reap path to clean zombie tasks.
 
 ## Phase 2: User/Kernel Boundary
 

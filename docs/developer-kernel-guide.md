@@ -157,6 +157,8 @@ Use it when you need:
 
 - A single physical frame: `pmm_alloc_frame`
 - A contiguous run of frames: `pmm_alloc_frames`
+- Preferred-node placement: `pmm_alloc_frame_on_node` / `pmm_alloc_frames_on_node`
+- NUMA allocator introspection: `pmm_numa_node_count`, `pmm_get_numa_node_stats`
 
 ### Paging
 
@@ -221,11 +223,12 @@ See [`../kernel/kernel/scheduler.c`](../kernel/kernel/scheduler.c).
 
 Current thread model:
 
-- Fixed-size thread table with explicit thread lists (`free`, `runnable`, `sleeping`, `zombie`)
+- Fixed-size thread table with explicit thread lists (`free`, `runnable`, `sleeping`, `blocked`, `zombie`)
 - One kernel stack per task
 - Scheduler-maintained TSS `esp0` updates on task switches
 - Per-CPU run queues split by priority
 - NUMA-aware task placement (`preferred_numa_node`) with CPU affinity masks
+- Periodic load balancing with scheduler-safe runnable-task migration across CPUs
 - Cooperative yield via `int $48`
 - Priority-based preemptive time slicing through the active timer driver
 - `CR3` switching to each task's owned paging space on context switches
@@ -237,6 +240,8 @@ Scheduler API surface intended for kernel services:
 - Dynamic priority changes: `scheduler_set_task_priority`
 - Topology config hooks: `scheduler_topology_default` and `scheduler_configure_topology`
 - Introspection hooks: `scheduler_get_task_snapshot`, `scheduler_get_cpu_snapshot`, `scheduler_get_list_snapshot`
+- Trace hooks: `scheduler_get_trace_counters`, `scheduler_get_trace_latency`, `scheduler_trace_reset`
+- Lifecycle hooks: `scheduler_join_task`, `scheduler_reap_zombies`
 
 When creating new kernel services:
 
@@ -249,9 +254,8 @@ Current limits:
 - Synchronization now includes spinlocks, IRQ-save spinlock helpers, wait queues, condition waits, and sleepable mutexes
 - Semaphores are still not implemented
 - Tasks still run in ring 0
-- Zombie tasks are not reaped yet
-- Only CPU 0 is active today on i386 bring-up (policy is SMP/NUMA-aware, execution is not yet multi-core)
-- No remote wake-up IPIs, cross-CPU load balancer daemon, or NUMA memory allocator yet
+- Join/reap is explicit (there is no detach API yet), so callers should join or periodically reap exited workers
+- NUMA memory-node layout is policy-derived (configured node count with even frame ranges), not yet discovered from ACPI SRAT
 
 ## Platform Services, Debug, And Files
 
@@ -302,12 +306,14 @@ Useful scheduler inspection commands:
 
 - `tasks` for per-thread state, priority, affinity, and placement
 - `cpus` for per-CPU runnable depth and global scheduler list counts
+- `schedstat` for scheduler counters and latency metrics (`schedstat reset` clears them)
 
 Relevant memory-management test commands:
 
 - `test memmap`
 - `test vma`
 - `test slab`
+- `test pmm`
 - `test aspace`
 - `test sched`
 - `test sync`
@@ -432,6 +438,6 @@ If you continue extending DFOS, the next high-value kernel tasks are:
 
 1. Per-process page-directory ownership and user/kernel address-space split
 2. Locking primitives for shared kernel subsystems
-3. Reaping and joining kernel tasks
+3. Task cancellation and detach semantics for long-running services
 4. A real vnode and directory-aware VFS
 5. User and kernel privilege separation plus a syscall ABI

@@ -88,6 +88,8 @@ ISR_NOERR 45
 ISR_NOERR 46
 ISR_NOERR 47
 ISR_NOERR 48
+ISR_NOERR 49
+ISR_NOERR 50
 
 .global isr_stub_table
 isr_stub_table:
@@ -97,4 +99,4 @@ isr_stub_table:
 	.long isr24, isr25, isr26, isr27, isr28, isr29, isr30, isr31
 	.long isr32, isr33, isr34, isr35, isr36, isr37, isr38, isr39
 	.long isr40, isr41, isr42, isr43, isr44, isr45, isr46, isr47
-	.long isr48
+	.long isr48, isr49, isr50
